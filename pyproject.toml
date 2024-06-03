@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "genecrawler"
+version = "0.1.0"
+description = ""
+authors = ["Jan Szumiec <jan.szumiec@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+requests-html = "^0.10.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
