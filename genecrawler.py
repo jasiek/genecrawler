@@ -387,75 +387,82 @@ class GenetekaSearcher:
         """Search Geneteka database for person"""
         print(f"  Searching Geneteka for {person.given_name} {person.surname}...")
 
-        try:
-            # Navigate to main search page
-            page.goto(f"{self.BASE_URL}/index.php?op=gt&lang=pol", timeout=30000)
-            page.wait_for_load_state('networkidle')
+        all_results = []
 
-            # Fill in search form
-            # Note: BDM (birth/marriage/death) is a hidden input defaulting to 'B' (births)
+        # Search for births, marriages, and deaths
+        record_types = [
+            ('B', 'births', person.birth_year, -5, 5),
+            ('M', 'marriages', person.birth_year + 25 if person.birth_year else None, -10, 10),
+            ('D', 'deaths', person.death_year, -5, 5)
+        ]
 
-            # Select voivodeship if available (prefer birth location, fallback to death location)
-            voivodeship = person.birth_voivodeship or person.death_voivodeship
-            if voivodeship and voivodeship in self.VOIVODESHIP_CODES:
-                voivodeship_code = self.VOIVODESHIP_CODES[voivodeship]
-                page.select_option('select[name="w"]', voivodeship_code)
-                location_type = "birth" if person.birth_voivodeship else "death"
-                print(f"    Selected voivodeship: {voivodeship} ({voivodeship_code}) from {location_type} location")
+        for bdm_type, type_name, base_year, year_before, year_after in record_types:
+            try:
+                print(f"    Searching {type_name}...")
 
-            # Fill in surname
-            if person.surname:
-                page.fill('input[name="search_lastname"]', person.surname)
+                # Navigate to main search page
+                page.goto(f"{self.BASE_URL}/index.php?op=gt&lang=pol", timeout=30000)
+                page.wait_for_load_state('networkidle')
 
-            # Fill in given name
-            if person.given_name:
-                page.fill('input[name="search_name"]', person.given_name)
+                # Set the BDM (birth/marriage/death) parameter
+                page.evaluate(f"document.querySelector('input[name=\"bdm\"]').value = '{bdm_type}'")
 
-            # Fill in date range if available
-            if person.birth_year:
-                page.fill('input[name="from_date"]', str(person.birth_year - 5))
-                page.fill('input[name="to_date"]', str(person.birth_year + 5))
+                # Select voivodeship if available (prefer birth location, fallback to death location)
+                voivodeship = person.birth_voivodeship or person.death_voivodeship
+                if voivodeship and voivodeship in self.VOIVODESHIP_CODES:
+                    voivodeship_code = self.VOIVODESHIP_CODES[voivodeship]
+                    page.select_option('select[name="w"]', voivodeship_code)
 
-            # Submit form
-            page.click('input[type="submit"]')
-            page.wait_for_load_state('networkidle', timeout=30000)
+                # Fill in surname
+                if person.surname:
+                    page.fill('input[name="search_lastname"]', person.surname)
 
-            # Parse results
-            html = page.content()
-            soup = BeautifulSoup(html, 'html.parser')
+                # Fill in given name
+                if person.given_name:
+                    page.fill('input[name="search_name"]', person.given_name)
 
-            # Look for result table
-            results = []
-            result_table = soup.find('table', {'class': 'wyniki'})
-            if result_table:
-                rows = result_table.find_all('tr')[1:]  # Skip header
-                for row in rows:
-                    cols = row.find_all('td')
-                    if len(cols) >= 5:
-                        result = {
-                            'surname': cols[0].text.strip(),
-                            'given_name': cols[1].text.strip(),
-                            'year': cols[2].text.strip(),
-                            'parish': cols[3].text.strip(),
-                            'link': cols[4].find('a')['href'] if cols[4].find('a') else None
-                        }
-                        results.append(result)
+                # Fill in date range if available
+                if base_year:
+                    page.fill('input[name="from_date"]', str(base_year + year_before))
+                    page.fill('input[name="to_date"]', str(base_year + year_after))
 
-            return SearchResult(
-                source="Geneteka",
-                found=len(results) > 0,
-                record_count=len(results),
-                details=results
-            )
+                # Submit form
+                page.click('input[type="submit"]')
+                page.wait_for_load_state('networkidle', timeout=30000)
 
-        except Exception as e:
-            return SearchResult(
-                source="Geneteka",
-                found=False,
-                record_count=0,
-                details=[],
-                error=str(e)
-            )
+                # Parse results
+                html = page.content()
+                soup = BeautifulSoup(html, 'html.parser')
+
+                # Look for result table
+                result_table = soup.find('table', {'class': 'wyniki'})
+                if result_table:
+                    rows = result_table.find_all('tr')[1:]  # Skip header
+                    for row in rows:
+                        cols = row.find_all('td')
+                        if len(cols) >= 5:
+                            result = {
+                                'type': type_name,
+                                'surname': cols[0].text.strip(),
+                                'given_name': cols[1].text.strip(),
+                                'year': cols[2].text.strip(),
+                                'parish': cols[3].text.strip(),
+                                'link': cols[4].find('a')['href'] if cols[4].find('a') else None
+                            }
+                            all_results.append(result)
+
+                # Small delay between searches
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"    Error searching {type_name}: {e}")
+
+        return SearchResult(
+            source="Geneteka",
+            found=len(all_results) > 0,
+            record_count=len(all_results),
+            details=all_results
+        )
 
 
 class PTGSearcher:
