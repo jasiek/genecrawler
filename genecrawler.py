@@ -21,6 +21,8 @@ import time
 from ged4py import GedcomReader
 from playwright.sync_api import sync_playwright, Page, TimeoutError as PlaywrightTimeout
 from bs4 import BeautifulSoup
+from geopy.geocoders import Nominatim
+from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
 
 @dataclass
@@ -33,6 +35,8 @@ class Person:
     death_year: Optional[int] = None
     birth_place: Optional[str] = None
     death_place: Optional[str] = None
+    birth_voivodeship: Optional[str] = None
+    death_voivodeship: Optional[str] = None
     father_name: Optional[str] = None
     mother_name: Optional[str] = None
 
@@ -47,36 +51,207 @@ class SearchResult:
     error: Optional[str] = None
 
 
+class LocationParser:
+    """Parses location information and extracts voivodeship"""
+
+    # Mapping of voivodeship names in various formats to standardized names
+    VOIVODESHIP_MAPPING = {
+        # Polish names (various cases)
+        'DOLNOŚLĄSKIE': 'dolnośląskie',
+        'DOLNOSLASKIE': 'dolnośląskie',
+        'LOWER SILESIAN VOIVODESHIP': 'dolnośląskie',
+        'LOWER SILESIA': 'dolnośląskie',
+
+        'KUJAWSKO-POMORSKIE': 'kujawsko-pomorskie',
+        'KUYAVIAN-POMERANIAN VOIVODESHIP': 'kujawsko-pomorskie',
+        'KUYAVIAN-POMERANIAN': 'kujawsko-pomorskie',
+
+        'LUBELSKIE': 'lubelskie',
+        'LUBLIN VOIVODESHIP': 'lubelskie',
+
+        'LUBUSKIE': 'lubuskie',
+        'LUBUSZ VOIVODESHIP': 'lubuskie',
+
+        'ŁÓDZKIE': 'łódzkie',
+        'ŁODZKIE': 'łódzkie',
+        'LODZKIE': 'łódzkie',
+        'LODZ VOIVODESHIP': 'łódzkie',
+
+        'MAŁOPOLSKIE': 'małopolskie',
+        'MAŁOPOLSKA': 'małopolskie',
+        'MALOPOLSKIE': 'małopolskie',
+        'MALOPOLSKA': 'małopolskie',
+        'LESSER POLAND VOIVODESHIP': 'małopolskie',
+        'LESSER POLAND': 'małopolskie',
+
+        'MAZOWIECKIE': 'mazowieckie',
+        'MASOVIAN VOIVODESHIP': 'mazowieckie',
+        'MASOVIA': 'mazowieckie',
+
+        'OPOLSKIE': 'opolskie',
+        'OPOLE VOIVODESHIP': 'opolskie',
+
+        'PODKARPACKIE': 'podkarpackie',
+        'SUBCARPATHIAN VOIVODESHIP': 'podkarpackie',
+        'SUBCARPATHIA': 'podkarpackie',
+
+        'PODLASKIE': 'podlaskie',
+        'PODLASIE': 'podlaskie',
+        'PODLACHIA': 'podlaskie',
+
+        'POMORSKIE': 'pomorskie',
+        'POMERANIAN VOIVODESHIP': 'pomorskie',
+        'POMERANIA': 'pomorskie',
+
+        'ŚLĄSKIE': 'śląskie',
+        'SLASKIE': 'śląskie',
+        'SILESIAN VOIVODESHIP': 'śląskie',
+        'SILESIA': 'śląskie',
+
+        'ŚWIĘTOKRZYSKIE': 'świętokrzyskie',
+        'SWIETOKRZYSKIE': 'świętokrzyskie',
+        'HOLY CROSS VOIVODESHIP': 'świętokrzyskie',
+
+        'WARMIŃSKO-MAZURSKIE': 'warmińsko-mazurskie',
+        'WARMINSKO-MAZURSKIE': 'warmińsko-mazurskie',
+        'WARMIAN-MASURIAN VOIVODESHIP': 'warmińsko-mazurskie',
+
+        'WIELKOPOLSKIE': 'wielkopolskie',
+        'GREATER POLAND VOIVODESHIP': 'wielkopolskie',
+        'GREATER POLAND': 'wielkopolskie',
+
+        'ZACHODNIOPOMORSKIE': 'zachodniopomorskie',
+        'WEST POMERANIAN VOIVODESHIP': 'zachodniopomorskie',
+        'WEST POMERANIA': 'zachodniopomorskie',
+    }
+
+    def __init__(self, use_nominatim: bool = False):
+        """Initialize LocationParser
+
+        Args:
+            use_nominatim: If True, use Nominatim API as fallback for unknown locations
+        """
+        self.use_nominatim = use_nominatim
+        self.geolocator = None
+        if use_nominatim:
+            self.geolocator = Nominatim(user_agent="genecrawler/0.1.0")
+        self._cache = {}
+
+    def parse_voivodeship(self, place_str: Optional[str]) -> Optional[str]:
+        """Parse voivodeship from GEDCOM place string
+
+        Args:
+            place_str: GEDCOM place string in format: Town, Area code, County, Region, Country, Subdivision
+
+        Returns:
+            Standardized voivodeship name or None
+        """
+        if not place_str:
+            return None
+
+        # Check cache first
+        if place_str in self._cache:
+            return self._cache[place_str]
+
+        voivodeship = None
+
+        # First try to extract from GEDCOM place format
+        # Format: Town, Area code, County, Region, Country, Subdivision
+        parts = [p.strip() for p in place_str.split(',')]
+
+        # Region is usually at index 3
+        if len(parts) > 3 and parts[3]:
+            region = parts[3].upper()
+            if region in self.VOIVODESHIP_MAPPING:
+                voivodeship = self.VOIVODESHIP_MAPPING[region]
+
+        # If not found and we have a town name (index 0), try Nominatim
+        if not voivodeship and self.use_nominatim and len(parts) > 0 and parts[0]:
+            voivodeship = self._query_nominatim(parts[0])
+
+        # Cache result
+        self._cache[place_str] = voivodeship
+        return voivodeship
+
+    def _query_nominatim(self, town: str) -> Optional[str]:
+        """Query Nominatim for voivodeship information
+
+        Args:
+            town: Town name to query
+
+        Returns:
+            Standardized voivodeship name or None
+        """
+        if not self.geolocator:
+            return None
+
+        try:
+            # Add Poland to query for better results
+            query = f"{town}, Poland"
+            location = self.geolocator.geocode(query, exactly_one=True, timeout=5)
+
+            if location and location.raw.get('address'):
+                address = location.raw['address']
+                # Try to find state/region in address
+                state = address.get('state') or address.get('region')
+                if state:
+                    state_upper = state.upper()
+                    if state_upper in self.VOIVODESHIP_MAPPING:
+                        return self.VOIVODESHIP_MAPPING[state_upper]
+                    # Try lowercase version
+                    return state.lower()
+
+        except (GeocoderTimedOut, GeocoderServiceError) as e:
+            # Silently ignore geocoding errors
+            pass
+        except Exception as e:
+            # Log unexpected errors but continue
+            print(f"Warning: Nominatim error for '{town}': {e}")
+
+        return None
+
+
 class GedcomParser:
     """Parses GEDCOM files and extracts person information"""
 
-    def __init__(self, gedcom_file: Path):
+    def __init__(self, gedcom_file: Path, use_nominatim: bool = False):
         self.gedcom_file = gedcom_file
+        self.location_parser = LocationParser(use_nominatim=use_nominatim)
 
     def parse(self) -> List[Person]:
         """Parse GEDCOM file and return list of persons"""
         persons = []
-        skipped = 0
+        skipped_no_name = 0
+        skipped_uncertain = 0
 
         try:
             with GedcomReader(str(self.gedcom_file)) as reader:
                 for record in reader.records0('INDI'):
-                    person = self._extract_person(record)
+                    person, skip_reason = self._extract_person(record)
                     if person:
                         persons.append(person)
-                    else:
-                        skipped += 1
+                    elif skip_reason == 'no_name':
+                        skipped_no_name += 1
+                    elif skip_reason == 'uncertain':
+                        skipped_uncertain += 1
         except Exception as e:
             print(f"Error parsing GEDCOM file: {e}")
             sys.exit(1)
 
-        if skipped > 0:
-            print(f"Skipped {skipped} person(s) without names")
+        if skipped_no_name > 0:
+            print(f"Skipped {skipped_no_name} person(s) without names")
+        if skipped_uncertain > 0:
+            print(f"Skipped {skipped_uncertain} person(s) with uncertain names (containing '?')")
 
         return persons
 
-    def _extract_person(self, record) -> Optional[Person]:
-        """Extract person information from GEDCOM record"""
+    def _extract_person(self, record):
+        """Extract person information from GEDCOM record
+
+        Returns:
+            Tuple of (Person, skip_reason) where Person is None if skipped,
+            and skip_reason is 'no_name', 'uncertain', or None
+        """
         try:
             # Get ID
             person_id = record.xref_id
@@ -112,11 +287,16 @@ class GedcomParser:
 
             # Skip persons without at least a surname or given name
             if not surname and not given_name:
-                return None
+                return None, 'no_name'
+
+            # Skip persons with uncertain names (containing "?")
+            if '?' in given_name or '?' in surname:
+                return None, 'uncertain'
 
             # Get birth info
             birth_year = None
             birth_place = None
+            birth_voivodeship = None
             if record.sub_tags('BIRT'):
                 birt = record.sub_tags('BIRT')[0]
                 if birt.sub_tags('DATE'):
@@ -124,10 +304,12 @@ class GedcomParser:
                     birth_year = self._extract_year(str(date_value))
                 if birt.sub_tags('PLAC'):
                     birth_place = birt.sub_tags('PLAC')[0].value
+                    birth_voivodeship = self.location_parser.parse_voivodeship(birth_place)
 
             # Get death info
             death_year = None
             death_place = None
+            death_voivodeship = None
             if record.sub_tags('DEAT'):
                 deat = record.sub_tags('DEAT')[0]
                 if deat.sub_tags('DATE'):
@@ -135,6 +317,7 @@ class GedcomParser:
                     death_year = self._extract_year(str(date_value))
                 if deat.sub_tags('PLAC'):
                     death_place = deat.sub_tags('PLAC')[0].value
+                    death_voivodeship = self.location_parser.parse_voivodeship(death_place)
 
             # Get parents info
             father_name = None
@@ -152,12 +335,14 @@ class GedcomParser:
                 death_year=death_year,
                 birth_place=birth_place,
                 death_place=death_place,
+                birth_voivodeship=birth_voivodeship,
+                death_voivodeship=death_voivodeship,
                 father_name=father_name,
                 mother_name=mother_name
-            )
+            ), None
         except Exception as e:
             print(f"Error extracting person: {e}")
-            return None
+            return None, 'error'
 
     def _extract_year(self, date_str: str) -> Optional[int]:
         """Extract year from GEDCOM date string"""
@@ -178,6 +363,26 @@ class GenetekaSearcher:
 
     BASE_URL = "https://geneteka.genealodzy.pl"
 
+    # Mapping of standardized voivodeship names to Geneteka codes
+    VOIVODESHIP_CODES = {
+        'dolnośląskie': '01ds',
+        'kujawsko-pomorskie': '02kp',
+        'lubelskie': '03lb',
+        'lubuskie': '04ls',
+        'łódzkie': '05ld',
+        'małopolskie': '06mp',
+        'mazowieckie': '07mz',
+        'opolskie': '08op',
+        'podkarpackie': '09pk',
+        'podlaskie': '10pl',
+        'pomorskie': '11pm',
+        'śląskie': '12sl',
+        'świętokrzyskie': '13sk',
+        'warmińsko-mazurskie': '14wm',
+        'wielkopolskie': '15wp',
+        'zachodniopomorskie': '16zp',
+    }
+
     def search(self, page: Page, person: Person) -> SearchResult:
         """Search Geneteka database for person"""
         print(f"  Searching Geneteka for {person.given_name} {person.surname}...")
@@ -188,9 +393,15 @@ class GenetekaSearcher:
             page.wait_for_load_state('networkidle')
 
             # Fill in search form
-            # Select birth records (B) if birth year available, otherwise try all
-            if person.birth_year:
-                page.select_option('select[name="bdm"]', 'B')
+            # Note: BDM (birth/marriage/death) is a hidden input defaulting to 'B' (births)
+
+            # Select voivodeship if available (prefer birth location, fallback to death location)
+            voivodeship = person.birth_voivodeship or person.death_voivodeship
+            if voivodeship and voivodeship in self.VOIVODESHIP_CODES:
+                voivodeship_code = self.VOIVODESHIP_CODES[voivodeship]
+                page.select_option('select[name="w"]', voivodeship_code)
+                location_type = "birth" if person.birth_voivodeship else "death"
+                print(f"    Selected voivodeship: {voivodeship} ({voivodeship_code}) from {location_type} location")
 
             # Fill in surname
             if person.surname:
@@ -454,9 +665,19 @@ def print_person_info(person: Person):
     print(f"\n{'='*80}")
     print(f"Person: {person.given_name} {person.surname} (ID: {person.id})")
     if person.birth_year:
-        print(f"Birth: {person.birth_year}" + (f" in {person.birth_place}" if person.birth_place else ""))
+        birth_info = f"Birth: {person.birth_year}"
+        if person.birth_place:
+            birth_info += f" in {person.birth_place}"
+        if person.birth_voivodeship:
+            birth_info += f" [{person.birth_voivodeship}]"
+        print(birth_info)
     if person.death_year:
-        print(f"Death: {person.death_year}" + (f" in {person.death_place}" if person.death_place else ""))
+        death_info = f"Death: {person.death_year}"
+        if person.death_place:
+            death_info += f" in {person.death_place}"
+        if person.death_voivodeship:
+            death_info += f" [{person.death_voivodeship}]"
+        print(death_info)
     print(f"{'='*80}")
 
 
@@ -488,6 +709,8 @@ def main():
                        choices=["geneteka", "ptg", "poznan", "basia", "all"],
                        default=["all"],
                        help="Which databases to query (default: all)")
+    parser.add_argument("--use-nominatim", action="store_true",
+                       help="Use Nominatim API for geocoding unknown locations (slower)")
 
     args = parser.parse_args()
 
@@ -498,9 +721,14 @@ def main():
 
     # Parse GEDCOM file
     print(f"Parsing GEDCOM file: {args.gedcom_file}")
-    gedcom_parser = GedcomParser(args.gedcom_file)
+    gedcom_parser = GedcomParser(args.gedcom_file, use_nominatim=args.use_nominatim)
     persons = gedcom_parser.parse()
     print(f"Found {len(persons)} persons in GEDCOM file")
+
+    # Show voivodeship statistics
+    with_voivodeship = [p for p in persons if p.birth_voivodeship is not None]
+    if with_voivodeship:
+        print(f"Parsed voivodeships for {len(with_voivodeship)} persons")
 
     # Sort persons by birth year (oldest first), putting those without birth years at the end
     persons.sort(key=lambda p: (p.birth_year is None, p.birth_year or 9999))
