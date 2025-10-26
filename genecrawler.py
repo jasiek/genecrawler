@@ -502,6 +502,10 @@ def main():
     persons = gedcom_parser.parse()
     print(f"Found {len(persons)} persons in GEDCOM file")
 
+    # Sort persons by birth year (oldest first), putting those without birth years at the end
+    persons.sort(key=lambda p: (p.birth_year is None, p.birth_year or 9999))
+    print(f"Sorted persons by birth year (oldest first)")
+
     if args.limit:
         persons = persons[:args.limit]
         print(f"Limiting to first {args.limit} persons")
