@@ -4,10 +4,13 @@ version = "0.1.0"
 description = ""
 authors = ["Jan Szumiec <jan.szumiec@gmail.com>"]
 readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.12"
-requests-html = "^0.10.0"
+playwright = "^1.44.0"
+bs4 = "^0.0.2"
+ged4py = "^0.4.4"
 
 
 [build-system]
