@@ -120,8 +120,8 @@ class GedcomParser:
             if record.sub_tags('BIRT'):
                 birt = record.sub_tags('BIRT')[0]
                 if birt.sub_tags('DATE'):
-                    date_str = birt.sub_tags('DATE')[0].value
-                    birth_year = self._extract_year(date_str)
+                    date_value = birt.sub_tags('DATE')[0].value
+                    birth_year = self._extract_year(str(date_value))
                 if birt.sub_tags('PLAC'):
                     birth_place = birt.sub_tags('PLAC')[0].value
 
@@ -131,8 +131,8 @@ class GedcomParser:
             if record.sub_tags('DEAT'):
                 deat = record.sub_tags('DEAT')[0]
                 if deat.sub_tags('DATE'):
-                    date_str = deat.sub_tags('DATE')[0].value
-                    death_year = self._extract_year(date_str)
+                    date_value = deat.sub_tags('DATE')[0].value
+                    death_year = self._extract_year(str(date_value))
                 if deat.sub_tags('PLAC'):
                     death_place = deat.sub_tags('PLAC')[0].value
 
@@ -168,7 +168,7 @@ class GedcomParser:
             match = re.search(r'\b(1\d{3}|20\d{2})\b', date_str)
             if match:
                 return int(match.group(1))
-        except:
+        except Exception as e:
             pass
         return None
 
