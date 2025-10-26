@@ -561,15 +561,42 @@ class GenetekaSearcher:
                         row_count = 0
                         for row in rows:
                             cols = row.find_all('td')
-                            if len(cols) >= 5:
+
+                            # Parse based on record type (different table structures)
+                            if bdm_type == 'B' and len(cols) >= 10:
+                                # Birth table: Rok, Akt, Imię, Nazwisko, Imię ojca, Imię matki,
+                                #              Nazwisko matki, Parafia, Miejscowość, Uwagi
+                                scan_link = None
+                                if cols[9].find('a', href=True):
+                                    for link in cols[9].find_all('a', href=True):
+                                        if 'skanoteka' in link['href'] or 'doc' in link.get('target', ''):
+                                            scan_link = link['href']
+                                            break
+
                                 result = {
                                     'type': type_name,
                                     'voivodeship': voivodeship_name,
-                                    'surname': cols[0].text.strip(),
-                                    'given_name': cols[1].text.strip(),
-                                    'year': cols[2].text.strip(),
-                                    'parish': cols[3].text.strip(),
-                                    'link': cols[4].find('a')['href'] if cols[4].find('a') else None
+                                    'year': cols[0].text.strip(),
+                                    'act': cols[1].text.strip(),
+                                    'given_name': cols[2].text.strip(),
+                                    'surname': cols[3].text.strip(),
+                                    'father_given_name': cols[4].text.strip(),
+                                    'mother_given_name': cols[5].text.strip(),
+                                    'mother_surname': cols[6].text.strip(),
+                                    'parish': cols[7].text.strip(),
+                                    'locality': cols[8].text.strip(),
+                                    'link': scan_link
+                                }
+                                all_results.append(result)
+                                row_count += 1
+
+                            elif (bdm_type == 'M' or bdm_type == 'D') and len(cols) >= 5:
+                                # TODO: Marriage and death tables have different structures
+                                # For now, use a generic parser
+                                result = {
+                                    'type': type_name,
+                                    'voivodeship': voivodeship_name,
+                                    'data': ', '.join([col.text.strip() for col in cols[:5]])
                                 }
                                 all_results.append(result)
                                 row_count += 1
