@@ -17,6 +17,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass
 from datetime import datetime
 import time
+import random
 
 from ged4py import GedcomReader
 from playwright.sync_api import sync_playwright, Page, TimeoutError as PlaywrightTimeout
@@ -39,6 +40,36 @@ class Person:
     death_voivodeship: Optional[str] = None
     father_name: Optional[str] = None
     mother_name: Optional[str] = None
+
+    def has_polish_connection(self) -> bool:
+        """Check if person has a connection to Poland
+
+        Returns True if:
+        - Person has a Polish voivodeship
+        - Person has a place name mentioning Poland
+        - Person has NO location information at all (assume Poland)
+        """
+        # If we have a voivodeship, they're definitely in Poland
+        if self.birth_voivodeship or self.death_voivodeship:
+            return True
+
+        # Check if we have any location information at all
+        has_any_location = bool(self.birth_place or self.death_place)
+
+        # If no location information, assume Poland
+        if not has_any_location:
+            return True
+
+        # If we have location info, check if it mentions Poland
+        places = [self.birth_place, self.death_place]
+        for place in places:
+            if place:
+                place_upper = place.upper()
+                if 'POLAND' in place_upper or 'POLSKA' in place_upper or 'POL' in place_upper:
+                    return True
+
+        # We have location info but it doesn't mention Poland
+        return False
 
 
 @dataclass
@@ -718,6 +749,8 @@ def main():
                        help="Which databases to query (default: all)")
     parser.add_argument("--use-nominatim", action="store_true",
                        help="Use Nominatim API for geocoding unknown locations (slower)")
+    parser.add_argument("--random", action="store_true",
+                       help="Randomize the order of persons to process (default: oldest first)")
 
     args = parser.parse_args()
 
@@ -737,9 +770,18 @@ def main():
     if with_voivodeship:
         print(f"Parsed voivodeships for {len(with_voivodeship)} persons")
 
-    # Sort persons by birth year (oldest first), putting those without birth years at the end
-    persons.sort(key=lambda p: (p.birth_year is None, p.birth_year or 9999))
-    print(f"Sorted persons by birth year (oldest first)")
+    # Show Polish connection statistics
+    with_polish_connection = [p for p in persons if p.has_polish_connection()]
+    print(f"Found {len(with_polish_connection)} persons with Polish connections")
+
+    # Sort or randomize persons
+    if args.random:
+        random.shuffle(persons)
+        print(f"Randomized order of persons")
+    else:
+        # Sort persons by birth year (oldest first), putting those without birth years at the end
+        persons.sort(key=lambda p: (p.birth_year is None, p.birth_year or 9999))
+        print(f"Sorted persons by birth year (oldest first)")
 
     if args.limit:
         persons = persons[:args.limit]
@@ -771,8 +813,13 @@ def main():
 
             # Search each database
             if "geneteka" in searchers:
-                result = searchers["geneteka"].search(page, person)
-                print_search_results(result)
+                # Geneteka only works for Poland
+                if person.has_polish_connection():
+                    result = searchers["geneteka"].search(page, person)
+                    print_search_results(result)
+                else:
+                    print("\nGeneteka:")
+                    print("  Skipped (no Polish connection)")
 
             if "ptg" in searchers:
                 result = searchers["ptg"].search(page, person)
