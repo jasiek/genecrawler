@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import time
 import random
+import sqlite3
 
 from ged4py import GedcomReader
 from playwright.sync_api import sync_playwright, Page, TimeoutError as PlaywrightTimeout
@@ -168,6 +169,53 @@ class LocationParser:
             self.geolocator = Nominatim(user_agent="genecrawler/0.1.0")
         self._cache = {}
 
+        # Initialize SQLite database for Nominatim cache
+        self.db_path = Path.home() / '.genecrawler' / 'nominatim_cache.db'
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_database()
+
+    def _init_database(self):
+        """Initialize SQLite database and create cache table if needed"""
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS nominatim_cache (
+                query TEXT PRIMARY KEY,
+                voivodeship TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        conn.close()
+
+    def _get_cached_voivodeship(self, query: str) -> Optional[str]:
+        """Get cached voivodeship from database
+
+        Returns:
+            The cached voivodeship (may be None if location not found),
+            or a sentinel value '__NOT_CACHED__' if query not in cache
+        """
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute('SELECT voivodeship FROM nominatim_cache WHERE query = ?', (query,))
+        result = cursor.fetchone()
+        conn.close()
+
+        if result is None:
+            return '__NOT_CACHED__'
+        return result[0]  # May be None if location wasn't found
+
+    def _set_cached_voivodeship(self, query: str, voivodeship: Optional[str]):
+        """Store voivodeship in database cache"""
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO nominatim_cache (query, voivodeship)
+            VALUES (?, ?)
+        ''', (query, voivodeship))
+        conn.commit()
+        conn.close()
+
     def parse_voivodeship(self, place_str: Optional[str]) -> Optional[str]:
         """Parse voivodeship from GEDCOM place string
 
@@ -216,28 +264,50 @@ class LocationParser:
         if not self.geolocator:
             return None
 
+        query = town
+
+        # Check database cache first
+        cached_result = self._get_cached_voivodeship(query)
+        if cached_result != '__NOT_CACHED__':
+            print(f"    Nominatim lookup: '{query}' (cached)")
+            if cached_result:
+                print(f"      → Found voivodeship: {cached_result}")
+            else:
+                print(f"      → Location not found (cached)")
+            return cached_result
+
         try:
-            # Add Poland to query for better results
-            query = f"{town}, Poland"
+            print(f"    Nominatim lookup: '{query}'")
             location = self.geolocator.geocode(query, exactly_one=True, timeout=5)
 
-            if location and location.raw.get('address'):
-                address = location.raw['address']
-                # Try to find state/region in address
-                state = address.get('state') or address.get('region')
-                if state:
-                    state_upper = state.upper()
-                    if state_upper in self.VOIVODESHIP_MAPPING:
-                        return self.VOIVODESHIP_MAPPING[state_upper]
-                    # Try lowercase version
-                    return state.lower()
+            voivodeship = None
+            if location and location.address:
+                chunks = location.address.split(',')
+                for c in chunks:
+                    if 'województwo' in c:
+                        voivodeship = c.split(' ')[1].strip()
+                        break
+
+                if voivodeship:
+                    print(f"      → Found voivodeship: {voivodeship}")
+                    # Store in cache
+                    self._set_cached_voivodeship(query, voivodeship)
+                    return voivodeship
+                else:
+                    print(f"      → Location found but no voivodeship in address")
+            else:
+                print(f"      → Location not found")
+
+            # Store negative result in cache to avoid repeated lookups
+            self._set_cached_voivodeship(query, None)
 
         except (GeocoderTimedOut, GeocoderServiceError) as e:
-            # Silently ignore geocoding errors
-            pass
+            print(f"      → Nominatim timeout/service error: {e}")
+            # Don't cache errors
         except Exception as e:
             # Log unexpected errors but continue
-            print(f"Warning: Nominatim error for '{town}': {e}")
+            print(f"      → Nominatim error: {e}")
+            # Don't cache errors
 
         return None
 
@@ -420,73 +490,98 @@ class GenetekaSearcher:
 
         all_results = []
 
+        # Determine which voivodeships to search
+        voivodeship = person.birth_voivodeship or person.death_voivodeship
+        if voivodeship and voivodeship in self.VOIVODESHIP_CODES:
+            # Search only the identified voivodeship
+            voivodeships_to_search = [(voivodeship, self.VOIVODESHIP_CODES[voivodeship])]
+            print(f"  Searching in voivodeship: {voivodeship}")
+        else:
+            # Search all voivodeships
+            voivodeships_to_search = list(self.VOIVODESHIP_CODES.items())
+            print(f"  No voivodeship identified - searching all {len(voivodeships_to_search)} voivodeships")
+
         # Search for births, marriages, and deaths
+        # Map BDM types to table IDs used in Geneteka results
         record_types = [
-            ('B', 'births', person.birth_year, -5, 5),
-            ('M', 'marriages', person.birth_year + 25 if person.birth_year else None, -10, 10),
-            ('D', 'deaths', person.death_year, -5, 5)
+            ('B', 'births', 'table_b', person.birth_year, -5, 5),
+            ('M', 'marriages', 'table_s', person.birth_year + 25 if person.birth_year else None, -10, 10),
+            ('D', 'deaths', 'table_d', person.death_year, -5, 5)
         ]
 
-        for bdm_type, type_name, base_year, year_before, year_after in record_types:
-            try:
-                print(f"    Searching {type_name}...")
+        for bdm_type, type_name, table_id, base_year, year_before, year_after in record_types:
+            print(f"    Searching {type_name}...")
 
-                # Navigate to main search page
-                page.goto(f"{self.BASE_URL}/index.php?op=gt&lang=pol", timeout=30000)
-                page.wait_for_load_state('networkidle')
+            for voivodeship_name, voivodeship_code in voivodeships_to_search:
+                try:
+                    # Navigate to main search page
+                    page.goto(f"{self.BASE_URL}/index.php?op=gt&lang=pol", timeout=30000)
+                    page.wait_for_load_state('domcontentloaded')
 
-                # Set the BDM (birth/marriage/death) parameter
-                page.evaluate(f"document.querySelector('input[name=\"bdm\"]').value = '{bdm_type}'")
+                    # Set the BDM (birth/marriage/death) parameter
+                    page.evaluate(f"document.querySelector('input[name=\"bdm\"]').value = '{bdm_type}'")
 
-                # Select voivodeship if available (prefer birth location, fallback to death location)
-                voivodeship = person.birth_voivodeship or person.death_voivodeship
-                if voivodeship and voivodeship in self.VOIVODESHIP_CODES:
-                    voivodeship_code = self.VOIVODESHIP_CODES[voivodeship]
+                    # Select voivodeship
                     page.select_option('select[name="w"]', voivodeship_code)
 
-                # Fill in surname
-                if person.surname:
-                    page.fill('input[name="search_lastname"]', person.surname)
+                    # Fill in surname
+                    if person.surname:
+                        page.fill('input[name="search_lastname"]', person.surname)
 
-                # Fill in given name
-                if person.given_name:
-                    page.fill('input[name="search_name"]', person.given_name)
+                    # Fill in given name
+                    if person.given_name:
+                        page.fill('input[name="search_name"]', person.given_name)
 
-                # Fill in date range if available
-                if base_year:
-                    page.fill('input[name="from_date"]', str(base_year + year_before))
-                    page.fill('input[name="to_date"]', str(base_year + year_after))
+                    # Fill in date range if available
+                    from_year = None
+                    to_year = None
+                    if base_year:
+                        from_year = base_year + year_before
+                        to_year = base_year + year_after
+                        page.fill('input[name="from_date"]', str(from_year))
+                        page.fill('input[name="to_date"]', str(to_year))
 
-                # Submit form
-                page.click('input[type="submit"]')
-                page.wait_for_load_state('networkidle', timeout=30000)
+                    # Print search parameters
+                    print(f"      Parameters: bdm={bdm_type}, voivodeship={voivodeship_code} ({voivodeship_name}), "
+                          f"surname={person.surname or 'any'}, given_name={person.given_name or 'any'}, "
+                          f"years={from_year or 'any'}-{to_year or 'any'}")
 
-                # Parse results
-                html = page.content()
-                soup = BeautifulSoup(html, 'html.parser')
+                    # Submit form
+                    page.click('input[type="submit"]')
+                    page.wait_for_load_state('networkidle', timeout=30000)
 
-                # Look for result table
-                result_table = soup.find('table', {'class': 'wyniki'})
-                if result_table:
-                    rows = result_table.find_all('tr')[1:]  # Skip header
-                    for row in rows:
-                        cols = row.find_all('td')
-                        if len(cols) >= 5:
-                            result = {
-                                'type': type_name,
-                                'surname': cols[0].text.strip(),
-                                'given_name': cols[1].text.strip(),
-                                'year': cols[2].text.strip(),
-                                'parish': cols[3].text.strip(),
-                                'link': cols[4].find('a')['href'] if cols[4].find('a') else None
-                            }
-                            all_results.append(result)
+                    # Parse results
+                    html = page.content()
+                    soup = BeautifulSoup(html, 'html.parser')
 
-                # Small delay between searches
-                time.sleep(1)
+                    # Look for result table with specific ID and class
+                    result_table = soup.find('table', {'id': table_id, 'class': 'tablesearch'})
+                    if result_table:
+                        rows = result_table.find_all('tr')[1:]  # Skip header
+                        row_count = 0
+                        for row in rows:
+                            cols = row.find_all('td')
+                            if len(cols) >= 5:
+                                result = {
+                                    'type': type_name,
+                                    'voivodeship': voivodeship_name,
+                                    'surname': cols[0].text.strip(),
+                                    'given_name': cols[1].text.strip(),
+                                    'year': cols[2].text.strip(),
+                                    'parish': cols[3].text.strip(),
+                                    'link': cols[4].find('a')['href'] if cols[4].find('a') else None
+                                }
+                                all_results.append(result)
+                                row_count += 1
 
-            except Exception as e:
-                print(f"    Error searching {type_name}: {e}")
+                        if row_count > 0:
+                            print(f"      → Found {row_count} result(s) in table {table_id}")
+
+                    # Small delay between searches
+                    time.sleep(1)
+
+                except Exception as e:
+                    print(f"      Error searching {voivodeship_name}: {e}")
 
         return SearchResult(
             source="Geneteka",
@@ -751,6 +846,8 @@ def main():
                        help="Use Nominatim API for geocoding unknown locations (slower)")
     parser.add_argument("--random", action="store_true",
                        help="Randomize the order of persons to process (default: oldest first)")
+    parser.add_argument("--gedcom-record", type=str,
+                       help="Search only for a specific GEDCOM record by ID (e.g., 7335288 or @7335288@)")
 
     args = parser.parse_args()
 
@@ -765,6 +862,23 @@ def main():
     persons = gedcom_parser.parse()
     print(f"Found {len(persons)} persons in GEDCOM file")
 
+    # Filter for specific record if requested
+    if args.gedcom_record:
+        # Normalize the ID - accept both "7335288" and "@7335288@" formats
+        target_id = args.gedcom_record
+        if not target_id.startswith('@'):
+            target_id = f"@{target_id}"
+        if not target_id.endswith('@'):
+            target_id = f"{target_id}@"
+
+        matching_persons = [p for p in persons if p.id == target_id]
+        if not matching_persons:
+            print(f"Error: No person found with ID {target_id}")
+            sys.exit(1)
+
+        persons = matching_persons
+        print(f"Filtered to specific record: {target_id}")
+
     # Show voivodeship statistics
     with_voivodeship = [p for p in persons if p.birth_voivodeship is not None]
     if with_voivodeship:
@@ -774,18 +888,19 @@ def main():
     with_polish_connection = [p for p in persons if p.has_polish_connection()]
     print(f"Found {len(with_polish_connection)} persons with Polish connections")
 
-    # Sort or randomize persons
-    if args.random:
-        random.shuffle(persons)
-        print(f"Randomized order of persons")
-    else:
-        # Sort persons by birth year (oldest first), putting those without birth years at the end
-        persons.sort(key=lambda p: (p.birth_year is None, p.birth_year or 9999))
-        print(f"Sorted persons by birth year (oldest first)")
+    # Sort or randomize persons (skip if specific record requested)
+    if not args.gedcom_record:
+        if args.random:
+            random.shuffle(persons)
+            print(f"Randomized order of persons")
+        else:
+            # Sort persons by birth year (oldest first), putting those without birth years at the end
+            persons.sort(key=lambda p: (p.birth_year is None, p.birth_year or 9999))
+            print(f"Sorted persons by birth year (oldest first)")
 
-    if args.limit:
-        persons = persons[:args.limit]
-        print(f"Limiting to first {args.limit} persons")
+        if args.limit:
+            persons = persons[:args.limit]
+            print(f"Limiting to first {args.limit} persons")
 
     # Determine which databases to search
     databases = args.databases
