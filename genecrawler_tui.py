@@ -5,6 +5,7 @@ GeneCrawler TUI - Browse matched genealogical records with ncurses interface
 This script provides a text-based user interface for browsing records stored
 in the matched_records database. Features:
 - Column-based display of all matched records
+- Tab key to switch between matched records and all retrieved records
 - Full-text search across all fields (press '/')
 - Keyboard navigation (arrow keys, page up/down)
 - Sorted display in ascending order
@@ -21,8 +22,10 @@ class MatchedRecordsBrowser:
     """TUI for browsing matched genealogical records"""
 
     def __init__(self):
-        self.db_path = Path.home() / '.genecrawler' / 'matched_records.db'
-        self.records: List[Dict] = []
+        self.db_path = Path.home() / ".genecrawler" / "matched_records.db"
+        self.matched_records: List[Dict] = []
+        self.retrieved_records: List[Dict] = []
+        self.records: List[Dict] = []  # Current view's records
         self.filtered_records: List[Dict] = []
         self.current_row = 0
         self.scroll_offset = 0
@@ -30,6 +33,7 @@ class MatchedRecordsBrowser:
         self.details_mode = False
         self.search_query = ""
         self.status_message = ""
+        self.view_mode = "matched"  # "matched" or "all"
 
         # Column definitions: (name, width, db_field)
         # Special field "_link" will show ✓ or ✗ based on presence of link
@@ -46,7 +50,7 @@ class MatchedRecordsBrowser:
         ]
 
     def load_records(self) -> bool:
-        """Load all records from database"""
+        """Load all records from database (both matched and retrieved)"""
         if not self.db_path.exists():
             self.status_message = f"Database not found: {self.db_path}"
             return False
@@ -56,22 +60,55 @@ class MatchedRecordsBrowser:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            # Load all records sorted by person_surname, person_given_name, year
-            cursor.execute('''
+            # Load matched records
+            cursor.execute(
+                """
                 SELECT * FROM matched_records
                 ORDER BY person_surname ASC, person_given_name ASC, year ASC
-            ''')
+            """
+            )
+            self.matched_records = [dict(row) for row in cursor.fetchall()]
 
-            self.records = [dict(row) for row in cursor.fetchall()]
-            self.filtered_records = self.records.copy()
+            # Load all retrieved records
+            cursor.execute(
+                """
+                SELECT * FROM retrieved_records
+                ORDER BY person_surname ASC, person_given_name ASC, year ASC
+            """
+            )
+            self.retrieved_records = [dict(row) for row in cursor.fetchall()]
+
             conn.close()
 
-            self.status_message = f"Loaded {len(self.records)} records from database"
+            # Set current view to matched records by default
+            self.set_view_mode("matched")
+
+            self.status_message = f"Loaded {len(self.matched_records)} matched, {len(self.retrieved_records)} all records"
             return True
 
         except Exception as e:
             self.status_message = f"Error loading database: {e}"
             return False
+
+    def set_view_mode(self, mode: str):
+        """Switch between matched and all records view
+
+        Args:
+            mode: Either "matched" or "all"
+        """
+        self.view_mode = mode
+        if mode == "matched":
+            self.records = self.matched_records
+        else:  # "all"
+            self.records = self.retrieved_records
+
+        # Re-apply current search filter
+        self.filter_records(self.search_query)
+
+        # Reset position if current row is out of bounds
+        if self.current_row >= len(self.filtered_records):
+            self.current_row = max(0, len(self.filtered_records) - 1)
+            self.scroll_offset = 0
 
     def filter_records(self, query: str):
         """Filter records based on search query (full text search)"""
@@ -84,22 +121,24 @@ class MatchedRecordsBrowser:
 
         for record in self.records:
             # Search across all text fields
-            searchable_text = " ".join([
-                str(record.get('person_id', '')),
-                str(record.get('person_given_name', '')),
-                str(record.get('person_surname', '')),
-                str(record.get('record_type', '')),
-                str(record.get('source', '')),
-                str(record.get('voivodeship', '')),
-                str(record.get('year', '')),
-                str(record.get('result_given_name', '')),
-                str(record.get('result_surname', '')),
-                str(record.get('father_given_name', '')),
-                str(record.get('mother_given_name', '')),
-                str(record.get('mother_surname', '')),
-                str(record.get('parish', '')),
-                str(record.get('locality', '')),
-            ]).lower()
+            searchable_text = " ".join(
+                [
+                    str(record.get("person_id", "")),
+                    str(record.get("person_given_name", "")),
+                    str(record.get("person_surname", "")),
+                    str(record.get("record_type", "")),
+                    str(record.get("source", "")),
+                    str(record.get("voivodeship", "")),
+                    str(record.get("year", "")),
+                    str(record.get("result_given_name", "")),
+                    str(record.get("result_surname", "")),
+                    str(record.get("father_given_name", "")),
+                    str(record.get("mother_given_name", "")),
+                    str(record.get("mother_surname", "")),
+                    str(record.get("parish", "")),
+                    str(record.get("locality", "")),
+                ]
+            ).lower()
 
             if query_lower in searchable_text:
                 self.filtered_records.append(record)
@@ -115,18 +154,18 @@ class MatchedRecordsBrowser:
         """
         if db_field == "_link":
             # Show ✓ if link is present, blank if not
-            link = record.get('link', '')
+            link = record.get("link", "")
             return "✓" if link and str(link).strip() else ""
         else:
             # Regular field - just return the value
-            return str(record.get(db_field, ''))
+            return str(record.get(db_field, ""))
 
     def truncate_text(self, text: str, width: int) -> str:
         """Truncate text to fit within column width"""
         text = str(text) if text else ""
         if len(text) <= width:
             return text.ljust(width)
-        return text[:width-1] + "…"
+        return text[: width - 1] + "…"
 
     def draw_header(self, stdscr, height: int, width: int):
         """Draw the column header"""
@@ -137,12 +176,12 @@ class MatchedRecordsBrowser:
                 header += col_name.ljust(col_width)[:col_width] + " "
 
             stdscr.attron(curses.color_pair(1) | curses.A_BOLD)
-            stdscr.addstr(0, 0, header[:width-1].ljust(width-1))
+            stdscr.addstr(0, 0, header[: width - 1].ljust(width - 1))
             stdscr.attroff(curses.color_pair(1) | curses.A_BOLD)
 
             # Draw separator line
             stdscr.attron(curses.color_pair(1))
-            stdscr.addstr(1, 0, "─" * (width-1))
+            stdscr.addstr(1, 0, "─" * (width - 1))
             stdscr.attroff(curses.color_pair(1))
         except curses.error:
             pass
@@ -172,13 +211,13 @@ class MatchedRecordsBrowser:
             if row_idx == self.current_row:
                 try:
                     stdscr.attron(curses.color_pair(2) | curses.A_BOLD)
-                    stdscr.addstr(y_pos, 0, row_text[:width-1].ljust(width-1))
+                    stdscr.addstr(y_pos, 0, row_text[: width - 1].ljust(width - 1))
                     stdscr.attroff(curses.color_pair(2) | curses.A_BOLD)
                 except curses.error:
                     pass
             else:
                 try:
-                    stdscr.addstr(y_pos, 0, row_text[:width-1])
+                    stdscr.addstr(y_pos, 0, row_text[: width - 1])
                 except curses.error:
                     pass
 
@@ -189,24 +228,26 @@ class MatchedRecordsBrowser:
         try:
             # Draw status bar background
             stdscr.attron(curses.color_pair(1))
-            stdscr.addstr(status_y, 0, " " * (width-1))
+            stdscr.addstr(status_y, 0, " " * (width - 1))
 
-            # Show current position and total
+            # Show current mode, position and total
+            mode_label = "Matched" if self.view_mode == "matched" else "All"
             if len(self.filtered_records) > 0:
-                pos_text = f" Row {self.current_row + 1}/{len(self.filtered_records)} "
+                pos_text = f" [{mode_label}] Row {self.current_row + 1}/{len(self.filtered_records)}"
                 if len(self.filtered_records) != len(self.records):
-                    pos_text += f"(filtered from {len(self.records)}) "
+                    pos_text += f" (filtered from {len(self.records)})"
+                pos_text += " "
             else:
-                pos_text = " No records "
+                pos_text = f" [{mode_label}] No records "
 
-            stdscr.addstr(status_y, 0, pos_text[:width-1])
+            stdscr.addstr(status_y, 0, pos_text[: width - 1])
             stdscr.attroff(curses.color_pair(1))
 
             # Draw help text
             help_y = height - 1
-            help_text = "q:Quit | /:Search | ↑↓:Navigate | PgUp/PgDn:Scroll | Enter:Details"
+            help_text = "q:Quit | Tab:Switch View | /:Search | ↑↓:Navigate | PgUp/PgDn:Scroll | Enter:Details"
             try:
-                stdscr.addstr(help_y, 0, help_text[:width-1])
+                stdscr.addstr(help_y, 0, help_text[: width - 1])
             except curses.error:
                 pass
 
@@ -222,7 +263,7 @@ class MatchedRecordsBrowser:
             search_y = 0
             stdscr.attron(curses.color_pair(3) | curses.A_BOLD)
             search_text = f"Search: {self.search_query}"
-            stdscr.addstr(search_y, 0, search_text[:width-1].ljust(width-1))
+            stdscr.addstr(search_y, 0, search_text[: width - 1].ljust(width - 1))
             stdscr.attroff(curses.color_pair(3) | curses.A_BOLD)
 
             # Move cursor to end of search text
@@ -248,27 +289,36 @@ class MatchedRecordsBrowser:
 
             # Display all fields
             fields = [
-                ("Person ID", record.get('person_id', '')),
-                ("Person Name", f"{record.get('person_given_name', '')} {record.get('person_surname', '')}"),
-                ("Record Type", record.get('record_type', '')),
-                ("Source", record.get('source', '')),
-                ("Year", record.get('year', '')),
-                ("Voivodeship", record.get('voivodeship', '')),
-                ("Act Number", record.get('act', '')),
-                ("Result Name", f"{record.get('result_given_name', '')} {record.get('result_surname', '')}"),
-                ("Father", record.get('father_given_name', '')),
-                ("Mother", f"{record.get('mother_given_name', '')} {record.get('mother_surname', '')}"),
-                ("Parish", record.get('parish', '')),
-                ("Locality", record.get('locality', '')),
-                ("Link", record.get('link', '')),
-                ("Found", record.get('found_timestamp', '')),
+                ("Person ID", record.get("person_id", "")),
+                (
+                    "Person Name",
+                    f"{record.get('person_given_name', '')} {record.get('person_surname', '')}",
+                ),
+                ("Record Type", record.get("record_type", "")),
+                ("Source", record.get("source", "")),
+                ("Year", record.get("year", "")),
+                ("Voivodeship", record.get("voivodeship", "")),
+                ("Act Number", record.get("act", "")),
+                (
+                    "Result Name",
+                    f"{record.get('result_given_name', '')} {record.get('result_surname', '')}",
+                ),
+                ("Father", record.get("father_given_name", "")),
+                (
+                    "Mother",
+                    f"{record.get('mother_given_name', '')} {record.get('mother_surname', '')}",
+                ),
+                ("Parish", record.get("parish", "")),
+                ("Locality", record.get("locality", "")),
+                ("Link", record.get("link", "")),
+                ("Found", record.get("found_timestamp", "")),
             ]
 
             y_pos = 2
             for label, value in fields:
                 if value and str(value).strip():
                     line = f"{label:20s}: {value}"
-                    stdscr.addstr(y_pos, 0, line[:width-1])
+                    stdscr.addstr(y_pos, 0, line[: width - 1])
                     y_pos += 1
                     if y_pos >= height - 3:
                         break
@@ -276,7 +326,7 @@ class MatchedRecordsBrowser:
             # Help text
             help_text = "Press Enter to return to list..."
             stdscr.attron(curses.color_pair(1))
-            stdscr.addstr(height - 1, 0, help_text[:width-1])
+            stdscr.addstr(height - 1, 0, help_text[: width - 1])
             stdscr.attroff(curses.color_pair(1))
 
         except curses.error:
@@ -290,7 +340,7 @@ class MatchedRecordsBrowser:
         if self.details_mode:
             if key in (curses.KEY_ENTER, 10, 13):
                 self.details_mode = False
-            elif key == ord('q') or key == ord('Q'):
+            elif key == ord("q") or key == ord("Q"):
                 return False
             # Ignore other keys in details mode
             return True
@@ -313,9 +363,15 @@ class MatchedRecordsBrowser:
                 self.filter_records(self.search_query)
         else:
             # Handle regular navigation mode
-            if key == ord('q') or key == ord('Q'):
+            if key == ord("q") or key == ord("Q"):
                 return False
-            elif key == ord('/'):
+            elif key == ord("\t") or key == 9:  # Tab key
+                # Toggle between matched and all records
+                if self.view_mode == "matched":
+                    self.set_view_mode("all")
+                else:
+                    self.set_view_mode("matched")
+            elif key == ord("/"):
                 self.search_mode = True
                 self.search_query = ""
                 curses.curs_set(1)
@@ -333,10 +389,13 @@ class MatchedRecordsBrowser:
                 self.current_row = max(0, self.current_row - available_rows)
                 self.scroll_offset = max(0, self.scroll_offset - available_rows)
             elif key == curses.KEY_NPAGE:  # Page Down
-                self.current_row = min(len(self.filtered_records) - 1,
-                                      self.current_row + available_rows)
-                self.scroll_offset = min(len(self.filtered_records) - available_rows,
-                                        self.scroll_offset + available_rows)
+                self.current_row = min(
+                    len(self.filtered_records) - 1, self.current_row + available_rows
+                )
+                self.scroll_offset = min(
+                    len(self.filtered_records) - available_rows,
+                    self.scroll_offset + available_rows,
+                )
                 if self.scroll_offset < 0:
                     self.scroll_offset = 0
             elif key == curses.KEY_HOME:
@@ -423,6 +482,7 @@ def main():
     except Exception as e:
         print(f"Error: {e}")
         import traceback
+
         traceback.print_exc()
 
 
