@@ -23,6 +23,9 @@ python3 genecrawler.py MyGenealogy.heredis
 python3 genecrawler.py MyGenealogy.heredis --limit 10 --max-pages 1 --recent-only
 python3 genecrawler.py MyGenealogy.heredis --record-id 57
 python3 genecrawler.py MyGenealogy.heredis --databases geneteka ptg --no-headless
+
+# Browse matched records with TUI
+python3 genecrawler_tui.py
 ```
 
 ### Testing
@@ -53,7 +56,8 @@ poetry run pytest --cov=genecrawler
 GeneCrawler was refactored from a monolithic 1047-line file into a modular package:
 
 ```
-genecrawler.py              # Entry point (imports from genecrawler.cli)
+genecrawler.py              # Main CLI entry point (imports from genecrawler.cli)
+genecrawler_tui.py          # TUI for browsing matched records (ncurses)
 heredis_adapter.py          # Heredis SQLite database adapter
 genecrawler/
 ├── __init__.py            # Package exports
@@ -83,6 +87,13 @@ Each searcher uses Playwright to navigate websites, fill search forms, and parse
 **Polish Geography**: The `LocationParser` handles Polish voivodeship (province) mapping with support for Heredis-specific variations (e.g., "MAŁOPOLSKA" → "małopolskie"). Contains mappings for all 16 Polish voivodeships.
 
 **Matched Records**: Exact matches are stored in `~/.genecrawler/matched_records.db` SQLite database via the `MatchedRecordsDB` class.
+
+**TUI Browser**: The `genecrawler_tui.py` script provides an ncurses-based text user interface for browsing matched records with:
+- Column-based table display with horizontal scrolling
+- Full-text search across all fields (activated with `/`)
+- Keyboard navigation (arrow keys, Page Up/Down, Home/End)
+- Detailed view of individual records (press Enter)
+- Records sorted by surname, given name, and year
 
 ### Critical Implementation Details
 

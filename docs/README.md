@@ -29,11 +29,27 @@ poetry run playwright install chromium
 
 ### Basic Usage
 
-Query all databases for all persons in a GEDCOM file:
+Query all databases for all persons in a Heredis database:
 
 ```bash
-poetry run python genecrawler.py path/to/your/family.ged
+python3 genecrawler.py path/to/your/database.heredis
 ```
+
+### Browse Matched Records
+
+After running searches, use the TUI to browse matched records:
+
+```bash
+python3 genecrawler_tui.py
+```
+
+The TUI provides:
+- Column-based table view of all matched records
+- Full-text search (press `/`)
+- Keyboard navigation with arrow keys
+- Detailed view of individual records (press Enter)
+
+See [TUI_GUIDE.md](TUI_GUIDE.md) for detailed usage instructions.
 
 ### Advanced Options
 
