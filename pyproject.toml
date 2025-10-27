@@ -10,7 +10,6 @@ package-mode = false
 python = "^3.12"
 playwright = "^1.44.0"
 bs4 = "^0.0.2"
-ged4py = "^0.4.4"
 geopy = "^2.4.1"
 
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-GeneCrawler - GEDCOM to Genealogical Database Query Tool
+GeneCrawler - Heredis Database to Genealogical Database Query Tool
 
-This script reads a GEDCOM file and queries multiple Polish genealogical databases
-for information about each person in the file:
+This script reads a Heredis genealogy database and queries multiple Polish genealogical
+databases for information about each person in the database:
 - Geneteka (geneteka.genealodzy.pl)
 - PTG PomGenBaza (www.ptg.gda.pl)
 - Poznan Project (poznan-project.psnc.pl)
@@ -20,11 +20,11 @@ import time
 import random
 import sqlite3
 
-from ged4py import GedcomReader
 from playwright.sync_api import sync_playwright, Page, TimeoutError as PlaywrightTimeout
 from bs4 import BeautifulSoup
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
+from heredis_adapter import HeredisAdapter
 
 
 def extract_first_name(full_name: str) -> str:
@@ -45,7 +45,7 @@ def extract_first_name(full_name: str) -> str:
 
 @dataclass
 class Person:
-    """Represents a person from GEDCOM file"""
+    """Represents a person from genealogy database"""
     id: str
     given_name: str
     surname: str
@@ -428,153 +428,6 @@ class MatchedRecordsDB:
 
         conn.close()
         return False
-
-
-class GedcomParser:
-    """Parses GEDCOM files and extracts person information"""
-
-    def __init__(self, gedcom_file: Path, use_nominatim: bool = False):
-        self.gedcom_file = gedcom_file
-        self.location_parser = LocationParser(use_nominatim=use_nominatim)
-
-    def parse(self) -> List[Person]:
-        """Parse GEDCOM file and return list of persons"""
-        persons = []
-        skipped_no_name = 0
-        skipped_uncertain = 0
-
-        try:
-            with GedcomReader(str(self.gedcom_file)) as reader:
-                for record in reader.records0('INDI'):
-                    person, skip_reason = self._extract_person(record)
-                    if person:
-                        persons.append(person)
-                    elif skip_reason == 'no_name':
-                        skipped_no_name += 1
-                    elif skip_reason == 'uncertain':
-                        skipped_uncertain += 1
-        except Exception as e:
-            print(f"Error parsing GEDCOM file: {e}")
-            sys.exit(1)
-
-        if skipped_no_name > 0:
-            print(f"Skipped {skipped_no_name} person(s) without names")
-        if skipped_uncertain > 0:
-            print(f"Skipped {skipped_uncertain} person(s) with uncertain names (containing '?')")
-
-        return persons
-
-    def _extract_person(self, record):
-        """Extract person information from GEDCOM record
-
-        Returns:
-            Tuple of (Person, skip_reason) where Person is None if skipped,
-            and skip_reason is 'no_name', 'uncertain', or None
-        """
-        try:
-            # Get ID
-            person_id = record.xref_id
-
-            # Get name using GIVN and SURN sub-tags
-            given_name = ""
-            surname = ""
-
-            name_records = record.sub_tags('NAME')
-            if name_records:
-                name_record = name_records[0]
-
-                # Try to get GIVN (given name) sub-tag
-                givn_tags = name_record.sub_tags('GIVN')
-                if givn_tags:
-                    given_name = givn_tags[0].value.strip()
-
-                # Try to get SURN (surname) sub-tag
-                surn_tags = name_record.sub_tags('SURN')
-                if surn_tags:
-                    surname = surn_tags[0].value.strip()
-
-                # Fallback: parse NAME value if GIVN/SURN not available
-                if not given_name and not surname and hasattr(name_record, 'value'):
-                    full_name = name_record.value
-                    # GEDCOM format: Given /Surname/
-                    if '/' in full_name:
-                        parts = full_name.split('/')
-                        given_name = parts[0].strip()
-                        surname = parts[1].strip() if len(parts) > 1 else ""
-                    else:
-                        given_name = full_name.strip()
-
-            # Skip persons without at least a surname or given name
-            if not surname and not given_name:
-                return None, 'no_name'
-
-            # Skip persons with uncertain names (containing "?")
-            if '?' in given_name or '?' in surname:
-                return None, 'uncertain'
-
-            # Get birth info
-            birth_year = None
-            birth_place = None
-            birth_voivodeship = None
-            if record.sub_tags('BIRT'):
-                birt = record.sub_tags('BIRT')[0]
-                if birt.sub_tags('DATE'):
-                    date_value = birt.sub_tags('DATE')[0].value
-                    birth_year = self._extract_year(str(date_value))
-                if birt.sub_tags('PLAC'):
-                    birth_place = birt.sub_tags('PLAC')[0].value
-                    birth_voivodeship = self.location_parser.parse_voivodeship(birth_place)
-
-            # Get death info
-            death_year = None
-            death_place = None
-            death_voivodeship = None
-            if record.sub_tags('DEAT'):
-                deat = record.sub_tags('DEAT')[0]
-                if deat.sub_tags('DATE'):
-                    date_value = deat.sub_tags('DATE')[0].value
-                    death_year = self._extract_year(str(date_value))
-                if deat.sub_tags('PLAC'):
-                    death_place = deat.sub_tags('PLAC')[0].value
-                    death_voivodeship = self.location_parser.parse_voivodeship(death_place)
-
-            # Get parents info
-            father_name = None
-            mother_name = None
-            if record.sub_tags('FAMC'):
-                family_ref = record.sub_tags('FAMC')[0].value
-                # Note: We'd need to resolve family references to get parent names
-                # This is a simplified version
-
-            return Person(
-                id=person_id,
-                given_name=given_name,
-                surname=surname,
-                birth_year=birth_year,
-                death_year=death_year,
-                birth_place=birth_place,
-                death_place=death_place,
-                birth_voivodeship=birth_voivodeship,
-                death_voivodeship=death_voivodeship,
-                father_name=father_name,
-                mother_name=mother_name
-            ), None
-        except Exception as e:
-            print(f"Error extracting person: {e}")
-            return None, 'error'
-
-    def _extract_year(self, date_str: str) -> Optional[int]:
-        """Extract year from GEDCOM date string"""
-        try:
-            # GEDCOM dates can be in various formats
-            # Try to extract 4-digit year
-            import re
-            match = re.search(r'\b(1\d{3}|20\d{2})\b', date_str)
-            if match:
-                return int(match.group(1))
-        except Exception as e:
-            pass
-        return None
 
 
 class GenetekaSearcher:
@@ -1042,9 +895,9 @@ def process_matches(person: Person, result: SearchResult, matched_db: MatchedRec
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Query Polish genealogical databases for persons in a GEDCOM file"
+        description="Query Polish genealogical databases for persons in a Heredis database"
     )
-    parser.add_argument("gedcom_file", type=Path, help="Path to GEDCOM file")
+    parser.add_argument("heredis_db", type=Path, help="Path to Heredis database file (.heredis)")
     parser.add_argument("--no-headless", action="store_false", dest="headless",
                        help="Run browser with visible UI (default: headless mode)")
     parser.add_argument("--limit", type=int, help="Limit number of persons to process")
@@ -1056,28 +909,28 @@ def main():
                        help="Use Nominatim API for geocoding unknown locations (slower)")
     parser.add_argument("--random", action="store_true",
                        help="Randomize the order of persons to process (default: oldest first)")
-    parser.add_argument("--gedcom-record", type=str,
-                       help="Search only for a specific GEDCOM record by ID (e.g., 7335288 or @7335288@)")
+    parser.add_argument("--record-id", type=str,
+                       help="Search only for a specific record by ID (e.g., 53 or @53@)")
     parser.add_argument("--recent-only", action="store_true",
                        help="Search only records updated in the last 60 days (Geneteka only)")
 
     args = parser.parse_args()
 
-    # Check if GEDCOM file exists
-    if not args.gedcom_file.exists():
-        print(f"Error: GEDCOM file not found: {args.gedcom_file}")
+    # Check if Heredis database exists
+    if not args.heredis_db.exists():
+        print(f"Error: Heredis database not found: {args.heredis_db}")
         sys.exit(1)
 
-    # Parse GEDCOM file
-    print(f"Parsing GEDCOM file: {args.gedcom_file}")
-    gedcom_parser = GedcomParser(args.gedcom_file, use_nominatim=args.use_nominatim)
-    persons = gedcom_parser.parse()
-    print(f"Found {len(persons)} persons in GEDCOM file")
+    # Parse Heredis database
+    print(f"Reading Heredis database: {args.heredis_db}")
+    with HeredisAdapter(args.heredis_db, use_nominatim=args.use_nominatim) as adapter:
+        persons = adapter.parse()
+    print(f"Found {len(persons)} persons in database")
 
     # Filter for specific record if requested
-    if args.gedcom_record:
-        # Normalize the ID - accept both "7335288" and "@7335288@" formats
-        target_id = args.gedcom_record
+    if args.record_id:
+        # Normalize the ID - accept both "53" and "@53@" formats
+        target_id = args.record_id
         if not target_id.startswith('@'):
             target_id = f"@{target_id}"
         if not target_id.endswith('@'):
@@ -1101,7 +954,7 @@ def main():
     print(f"Found {len(with_polish_connection)} persons with Polish connections")
 
     # Sort or randomize persons (skip if specific record requested)
-    if not args.gedcom_record:
+    if not args.record_id:
         if args.random:
             random.shuffle(persons)
             print(f"Randomized order of persons")
