@@ -45,6 +45,7 @@ class MatchedRecordsBrowser:
             ("Year", 6, "year"),
             ("Link", 5, "_link"),
             ("Source", 10, "source"),
+            ("Voivodeship", 12, "voivodeship"),
             ("Parish", 25, "parish"),
             ("Locality", 20, "locality"),
         ]
