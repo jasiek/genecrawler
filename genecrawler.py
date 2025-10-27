@@ -602,6 +602,14 @@ class GenetekaSearcher:
         'zachodniopomorskie': '16zp',
     }
 
+    def __init__(self, recent_only: bool = False):
+        """Initialize Geneteka searcher
+
+        Args:
+            recent_only: If True, search only records updated in last 60 days
+        """
+        self.recent_only = recent_only
+
     def search(self, page: Page, person: Person) -> SearchResult:
         """Search Geneteka database for person"""
         print(f"  Searching Geneteka for {person.given_name} {person.surname}...")
@@ -660,10 +668,15 @@ class GenetekaSearcher:
                         page.fill('input[name="from_date"]', str(from_year))
                         page.fill('input[name="to_date"]', str(to_year))
 
+                    # Check "recent records only" option if requested
+                    if self.recent_only:
+                        page.check('input[name="search_only_recent"]')
+
                     # Print search parameters
+                    recent_str = ", recent_only=True" if self.recent_only else ""
                     print(f"      Parameters: bdm={bdm_type}, voivodeship={voivodeship_code} ({voivodeship_name}), "
                           f"surname={person.surname or 'any'}, given_name={search_given_name or 'any'}, "
-                          f"years={from_year or 'any'}-{to_year or 'any'}")
+                          f"years={from_year or 'any'}-{to_year or 'any'}{recent_str}")
 
                     # Submit form
                     page.click('input[type="submit"]')
@@ -1045,6 +1058,8 @@ def main():
                        help="Randomize the order of persons to process (default: oldest first)")
     parser.add_argument("--gedcom-record", type=str,
                        help="Search only for a specific GEDCOM record by ID (e.g., 7335288 or @7335288@)")
+    parser.add_argument("--recent-only", action="store_true",
+                       help="Search only records updated in the last 60 days (Geneteka only)")
 
     args = parser.parse_args()
 
@@ -1107,7 +1122,9 @@ def main():
     # Initialize searchers
     searchers = {}
     if "geneteka" in databases:
-        searchers["geneteka"] = GenetekaSearcher()
+        searchers["geneteka"] = GenetekaSearcher(recent_only=args.recent_only)
+        if args.recent_only:
+            print("Searching only records updated in the last 60 days (Geneteka)")
     if "ptg" in databases:
         searchers["ptg"] = PTGSearcher()
     if "poznan" in databases:
