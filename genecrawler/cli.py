@@ -16,7 +16,12 @@ from heredis_adapter import HeredisAdapter
 from .models import Person
 from .database import MatchedRecordsDB
 from .utils import print_person_info, print_search_results, process_matches
-from .searchers import GenetekaSearcher, PTGSearcher, PoznanProjectSearcher, BaSIASearcher
+from .searchers import (
+    GenetekaSearcher,
+    PTGSearcher,
+    PoznanProjectSearcher,
+    BaSIASearcher,
+)
 
 
 def main():
@@ -24,24 +29,49 @@ def main():
     parser = argparse.ArgumentParser(
         description="Query Polish genealogical databases for persons in a Heredis database"
     )
-    parser.add_argument("heredis_db", type=Path, help="Path to Heredis database file (.heredis)")
-    parser.add_argument("--no-headless", action="store_false", dest="headless",
-                       help="Run browser with visible UI (default: headless mode)")
+    parser.add_argument(
+        "heredis_db", type=Path, help="Path to Heredis database file (.heredis)"
+    )
+    parser.add_argument(
+        "--no-headless",
+        action="store_false",
+        dest="headless",
+        help="Run browser with visible UI (default: headless mode)",
+    )
     parser.add_argument("--limit", type=int, help="Limit number of persons to process")
-    parser.add_argument("--databases", nargs="+",
-                       choices=["geneteka", "ptg", "poznan", "basia", "all"],
-                       default=["all"],
-                       help="Which databases to query (default: all)")
-    parser.add_argument("--use-nominatim", action="store_true",
-                       help="Use Nominatim API for geocoding unknown locations (slower)")
-    parser.add_argument("--random", action="store_true",
-                       help="Randomize the order of persons to process (default: oldest first)")
-    parser.add_argument("--record-id", type=str,
-                       help="Search only for a specific record by ID (e.g., 53 or @53@)")
-    parser.add_argument("--recent-only", action="store_true",
-                       help="Search only records updated in the last 60 days (Geneteka only)")
-    parser.add_argument("--max-pages", type=int, default=None,
-                       help="Maximum number of result pages to crawl per search (default: unlimited)")
+    parser.add_argument(
+        "--databases",
+        nargs="+",
+        choices=["geneteka", "ptg", "poznan", "basia", "all"],
+        default=["all"],
+        help="Which databases to query (default: all)",
+    )
+    parser.add_argument(
+        "--use-nominatim",
+        action="store_true",
+        help="Use Nominatim API for geocoding unknown locations (slower)",
+    )
+    parser.add_argument(
+        "--random",
+        action="store_true",
+        help="Randomize the order of persons to process (default: oldest first)",
+    )
+    parser.add_argument(
+        "--record-id",
+        type=str,
+        help="Search only for a specific record by ID (e.g., 53 or @53@)",
+    )
+    parser.add_argument(
+        "--recent-only",
+        action="store_true",
+        help="Search only records updated in the last 60 days (Geneteka only)",
+    )
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=None,
+        help="Maximum number of result pages to crawl per search (default: unlimited)",
+    )
 
     args = parser.parse_args()
 
@@ -56,13 +86,21 @@ def main():
         persons = adapter.parse()
     print(f"Found {len(persons)} persons in database")
 
+    # Filter out people born after 1978
+    persons_before_filter = len(persons)
+    persons = [p for p in persons if p.birth_year is None or p.birth_year <= 1978]
+    if persons_before_filter > len(persons):
+        print(
+            f"Filtered out {persons_before_filter - len(persons)} person(s) born after 1978"
+        )
+
     # Filter for specific record if requested
     if args.record_id:
         # Normalize the ID - accept both "53" and "@53@" formats
         target_id = args.record_id
-        if not target_id.startswith('@'):
+        if not target_id.startswith("@"):
             target_id = f"@{target_id}"
-        if not target_id.endswith('@'):
+        if not target_id.endswith("@"):
             target_id = f"{target_id}@"
 
         matching_persons = [p for p in persons if p.id == target_id]
@@ -93,7 +131,7 @@ def main():
             print(f"Sorted persons by birth year (oldest first)")
 
         if args.limit:
-            persons = persons[:args.limit]
+            persons = persons[: args.limit]
             print(f"Limiting to first {args.limit} persons")
 
     # Determine which databases to search
@@ -104,7 +142,9 @@ def main():
     # Initialize searchers
     searchers = {}
     if "geneteka" in databases:
-        searchers["geneteka"] = GenetekaSearcher(recent_only=args.recent_only, max_pages=args.max_pages)
+        searchers["geneteka"] = GenetekaSearcher(
+            recent_only=args.recent_only, max_pages=args.max_pages
+        )
         if args.recent_only:
             print("Searching only records updated in the last 60 days (Geneteka)")
         if args.max_pages:
