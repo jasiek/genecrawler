@@ -12,6 +12,16 @@ playwright = "^1.44.0"
 bs4 = "^0.0.2"
 geopy = "^2.4.1"
 
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
 
 [build-system]
 requires = ["poetry-core"]

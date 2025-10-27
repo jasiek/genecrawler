@@ -27,14 +27,23 @@ python3 genecrawler.py MyGenealogy.heredis --databases geneteka ptg --no-headles
 
 ### Testing
 ```bash
-# Test refactored modules
-python3 test_refactoring.py
+# Run all tests
+poetry run pytest
 
-# Test integration with Heredis adapter
-python3 test_integration.py
+# Run with verbose output
+poetry run pytest -v
 
-# Test max-pages feature
-python3 test_max_pages_simple.py
+# Run specific test file
+poetry run pytest tests/test_refactoring.py
+
+# Run specific test function
+poetry run pytest tests/test_refactoring.py::test_person_dataclass
+
+# Show test collection without running
+poetry run pytest --collect-only
+
+# Run tests with coverage (if pytest-cov installed)
+poetry run pytest --cov=genecrawler
 ```
 
 ## Architecture
