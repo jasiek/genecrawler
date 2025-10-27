@@ -22,7 +22,7 @@ class MatchedRecordsBrowser:
     """TUI for browsing matched genealogical records"""
 
     def __init__(self):
-        self.db_path = Path.home() / ".genecrawler" / "matched_records.db"
+        self.db_path = Path.home() / ".genecrawler" / "genecrawler.db"
         self.matched_records: List[Dict] = []
         self.retrieved_records: List[Dict] = []
         self.records: List[Dict] = []  # Current view's records
