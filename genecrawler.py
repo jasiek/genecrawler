@@ -27,6 +27,22 @@ from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
 
+def extract_first_name(full_name: str) -> str:
+    """Extract first name from a full given name string.
+
+    Handles names like "Jan Walenty" -> "Jan"
+
+    Args:
+        full_name: Full given name (may contain multiple names)
+
+    Returns:
+        First name only
+    """
+    if not full_name:
+        return ""
+    return full_name.strip().split()[0]
+
+
 @dataclass
 class Person:
     """Represents a person from GEDCOM file"""
@@ -363,7 +379,7 @@ class MatchedRecordsDB:
         conn = sqlite3.connect(str(self.db_path))
         cursor = conn.cursor()
 
-        # Check if given_name and surname match exactly (case-insensitive)
+        # Check if first name and surname match exactly (case-insensitive)
         result_given_name = result.get('given_name', '')
         result_surname = result.get('surname', '')
 
@@ -371,7 +387,11 @@ class MatchedRecordsDB:
             conn.close()
             return False
 
-        if (result_given_name.lower().strip() == person.given_name.lower().strip() and
+        # Extract first names for comparison
+        person_first_name = extract_first_name(person.given_name)
+        result_first_name = extract_first_name(result_given_name)
+
+        if (result_first_name.lower().strip() == person_first_name.lower().strip() and
             result_surname.lower().strip() == person.surname.lower().strip()):
 
             cursor.execute('''
@@ -626,9 +646,10 @@ class GenetekaSearcher:
                     if person.surname:
                         page.fill('input[name="search_lastname"]', person.surname)
 
-                    # Fill in given name
-                    if person.given_name:
-                        page.fill('input[name="search_name"]', person.given_name)
+                    # Fill in given name (use first name only)
+                    search_given_name = extract_first_name(person.given_name) if person.given_name else None
+                    if search_given_name:
+                        page.fill('input[name="search_name"]', search_given_name)
 
                     # Fill in date range if available
                     from_year = None
@@ -641,22 +662,30 @@ class GenetekaSearcher:
 
                     # Print search parameters
                     print(f"      Parameters: bdm={bdm_type}, voivodeship={voivodeship_code} ({voivodeship_name}), "
-                          f"surname={person.surname or 'any'}, given_name={person.given_name or 'any'}, "
+                          f"surname={person.surname or 'any'}, given_name={search_given_name or 'any'}, "
                           f"years={from_year or 'any'}-{to_year or 'any'}")
 
                     # Submit form
                     page.click('input[type="submit"]')
                     page.wait_for_load_state('networkidle', timeout=30000)
 
-                    # Parse results
-                    html = page.content()
-                    soup = BeautifulSoup(html, 'html.parser')
+                    # Parse results from all pages
+                    page_num = 1
+                    total_row_count = 0
 
-                    # Look for result table with specific ID and class
-                    result_table = soup.find('table', {'id': table_id, 'class': 'tablesearch'})
-                    if result_table:
+                    while True:
+                        # Parse current page
+                        html = page.content()
+                        soup = BeautifulSoup(html, 'html.parser')
+
+                        # Look for result table with specific ID and class
+                        result_table = soup.find('table', {'id': table_id, 'class': 'tablesearch'})
+                        if not result_table:
+                            break
+
                         rows = result_table.find_all('tr')[1:]  # Skip header
-                        row_count = 0
+                        page_row_count = 0
+
                         for row in rows:
                             cols = row.find_all('td')
 
@@ -686,7 +715,7 @@ class GenetekaSearcher:
                                     'link': scan_link
                                 }
                                 all_results.append(result)
-                                row_count += 1
+                                page_row_count += 1
 
                             elif (bdm_type == 'M' or bdm_type == 'D') and len(cols) >= 5:
                                 # TODO: Marriage and death tables have different structures
@@ -697,10 +726,30 @@ class GenetekaSearcher:
                                     'data': ', '.join([col.text.strip() for col in cols[:5]])
                                 }
                                 all_results.append(result)
-                                row_count += 1
+                                page_row_count += 1
 
-                        if row_count > 0:
-                            print(f"      → Found {row_count} result(s) in table {table_id}")
+                        total_row_count += page_row_count
+
+                        if page_row_count > 0:
+                            print(f"      → Page {page_num}: Found {page_row_count} result(s)")
+
+                        # Check for next page button (DataTables pagination)
+                        # Look for enabled "Next" button
+                        try:
+                            next_button = page.locator(f'#{table_id}_next:not(.disabled)')
+                            if next_button.count() > 0 and 'disabled' not in next_button.get_attribute('class'):
+                                next_button.click()
+                                page.wait_for_load_state('networkidle', timeout=10000)
+                                page_num += 1
+                                time.sleep(0.5)  # Small delay between pages
+                            else:
+                                break
+                        except Exception:
+                            # No more pages
+                            break
+
+                    if total_row_count > 0:
+                        print(f"      → Total: {total_row_count} result(s) from {page_num} page(s)")
 
                     # Small delay between searches
                     time.sleep(1)
@@ -729,9 +778,10 @@ class PTGSearcher:
             page.goto(self.BASE_URL, timeout=30000)
             page.wait_for_load_state('networkidle')
 
-            # Fill in search form
-            if person.given_name:
-                page.fill('input[name="mim"]', person.given_name)
+            # Fill in search form (use first name only)
+            search_given_name = extract_first_name(person.given_name) if person.given_name else None
+            if search_given_name:
+                page.fill('input[name="mim"]', search_given_name)
 
             if person.surname:
                 page.fill('input[name="mnz"]', person.surname)
@@ -796,13 +846,14 @@ class PoznanProjectSearcher:
             page.click('a[href="#extendedsearch"]')
             time.sleep(1)
 
-            # Fill in search form
+            # Fill in search form (use first name only)
             if person.surname:
                 page.fill('input[name="surname"]', person.surname)
 
-            if person.given_name:
+            search_given_name = extract_first_name(person.given_name) if person.given_name else None
+            if search_given_name:
                 # Groom or bride name
-                page.fill('input[name="firstname1"]', person.given_name)
+                page.fill('input[name="firstname1"]', search_given_name)
 
             # Set year range if available
             if person.birth_year:
@@ -865,9 +916,10 @@ class BaSIASearcher:
             page.goto(self.BASE_URL, timeout=30000)
             page.wait_for_load_state('networkidle')
 
-            # Fill in search form
-            if person.given_name:
-                page.fill('input[name="firstname"]', person.given_name)
+            # Fill in search form (use first name only)
+            search_given_name = extract_first_name(person.given_name) if person.given_name else None
+            if search_given_name:
+                page.fill('input[name="firstname"]', search_given_name)
 
             if person.surname:
                 page.fill('input[name="lastname"]', person.surname)
