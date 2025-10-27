@@ -455,13 +455,15 @@ class GenetekaSearcher:
         'zachodniopomorskie': '16zp',
     }
 
-    def __init__(self, recent_only: bool = False):
+    def __init__(self, recent_only: bool = False, max_pages: Optional[int] = None):
         """Initialize Geneteka searcher
 
         Args:
             recent_only: If True, search only records updated in last 60 days
+            max_pages: Maximum number of pages to crawl per search (None = unlimited)
         """
         self.recent_only = recent_only
+        self.max_pages = max_pages
 
     def search(self, page: Page, person: Person) -> SearchResult:
         """Search Geneteka database for person"""
@@ -598,6 +600,11 @@ class GenetekaSearcher:
 
                         if page_row_count > 0:
                             print(f"      → Page {page_num}: Found {page_row_count} result(s)")
+
+                        # Check if we've reached max_pages limit
+                        if self.max_pages and page_num >= self.max_pages:
+                            print(f"      → Reached max pages limit ({self.max_pages})")
+                            break
 
                         # Check for next page button (DataTables pagination)
                         # Look for enabled "Next" button
@@ -913,6 +920,8 @@ def main():
                        help="Search only for a specific record by ID (e.g., 53 or @53@)")
     parser.add_argument("--recent-only", action="store_true",
                        help="Search only records updated in the last 60 days (Geneteka only)")
+    parser.add_argument("--max-pages", type=int, default=None,
+                       help="Maximum number of result pages to crawl per search (default: unlimited)")
 
     args = parser.parse_args()
 
@@ -975,9 +984,11 @@ def main():
     # Initialize searchers
     searchers = {}
     if "geneteka" in databases:
-        searchers["geneteka"] = GenetekaSearcher(recent_only=args.recent_only)
+        searchers["geneteka"] = GenetekaSearcher(recent_only=args.recent_only, max_pages=args.max_pages)
         if args.recent_only:
             print("Searching only records updated in the last 60 days (Geneteka)")
+        if args.max_pages:
+            print(f"Limiting to {args.max_pages} page(s) per search (Geneteka)")
     if "ptg" in databases:
         searchers["ptg"] = PTGSearcher()
     if "poznan" in databases:
