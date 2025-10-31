@@ -220,3 +220,21 @@ class MatchedRecordsDB(GeneCrawlerDB):
 
         conn.close()
         return False
+
+    def has_matched_records(self, person_id: str) -> bool:
+        """Check if a person has any matched records in the database
+
+        Args:
+            person_id: The person ID to check
+
+        Returns:
+            True if the person has at least one matched record, False otherwise
+        """
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM matched_records WHERE person_id = ?", (person_id,)
+        )
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count > 0

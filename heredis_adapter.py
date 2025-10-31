@@ -23,6 +23,7 @@ except ImportError:
     @dataclass
     class Person:
         """Represents a person from GEDCOM file"""
+
         id: str
         given_name: str
         surname: str
@@ -34,6 +35,8 @@ except ImportError:
         death_voivodeship: Optional[str] = None
         father_name: Optional[str] = None
         mother_name: Optional[str] = None
+        birth_event_id: Optional[int] = None
+        death_event_id: Optional[int] = None
 
         def has_polish_connection(self) -> bool:
             """Check if person has a connection to Poland"""
@@ -46,7 +49,11 @@ except ImportError:
             for place in places:
                 if place:
                     place_upper = place.upper()
-                    if 'POLAND' in place_upper or 'POLSKA' in place_upper or 'POL' in place_upper:
+                    if (
+                        "POLAND" in place_upper
+                        or "POLSKA" in place_upper
+                        or "POL" in place_upper
+                    ):
                         return True
             return False
 
@@ -70,73 +77,58 @@ class HeredisAdapter:
     # Voivodeship mapping (standardized names)
     VOIVODESHIP_MAPPING = {
         # Polish names (various cases)
-        'DOLNOŚLĄSKIE': 'dolnośląskie',
-        'DOLNOSLASKIE': 'dolnośląskie',
-        'LOWER SILESIAN VOIVODESHIP': 'dolnośląskie',
-        'LOWER SILESIA': 'dolnośląskie',
-
-        'KUJAWSKO-POMORSKIE': 'kujawsko-pomorskie',
-        'KUYAVIAN-POMERANIAN VOIVODESHIP': 'kujawsko-pomorskie',
-        'KUYAVIAN-POMERANIAN': 'kujawsko-pomorskie',
-
-        'LUBELSKIE': 'lubelskie',
-        'LUBLIN VOIVODESHIP': 'lubelskie',
-
-        'LUBUSKIE': 'lubuskie',
-        'LUBUSZ VOIVODESHIP': 'lubuskie',
-
-        'ŁÓDZKIE': 'łódzkie',
-        'ŁODZKIE': 'łódzkie',
-        'LODZKIE': 'łódzkie',
-        'LODZ VOIVODESHIP': 'łódzkie',
-
-        'MAŁOPOLSKIE': 'małopolskie',
-        'MAŁOPOLSKA': 'małopolskie',  # Heredis variation
-        'MALOPOLSKIE': 'małopolskie',
-        'MALOPOLSKA': 'małopolskie',   # Heredis variation
-        'LESSER POLAND VOIVODESHIP': 'małopolskie',
-        'LESSER POLAND': 'małopolskie',
-
-        'MAZOWIECKIE': 'mazowieckie',
-        'MASOVIAN VOIVODESHIP': 'mazowieckie',
-        'MASOVIA': 'mazowieckie',
-
-        'OPOLSKIE': 'opolskie',
-        'OPOLE VOIVODESHIP': 'opolskie',
-
-        'PODKARPACKIE': 'podkarpackie',
-        'SUBCARPATHIAN VOIVODESHIP': 'podkarpackie',
-        'SUBCARPATHIA': 'podkarpackie',
-
-        'PODLASKIE': 'podlaskie',
-        'PODLASIE': 'podlaskie',
-        'PODLACHIA': 'podlaskie',
-
-        'POMORSKIE': 'pomorskie',
-        'POMERANIAN VOIVODESHIP': 'pomorskie',
-        'POMERANIA': 'pomorskie',
-
-        'ŚLĄSKIE': 'śląskie',
-        'SLASKIE': 'śląskie',
-        'SILESIAN VOIVODESHIP': 'śląskie',
-        'SILESIA': 'śląskie',
-
-        'ŚWIĘTOKRZYSKIE': 'świętokrzyskie',
-        'SWIETOKRZYSKIE': 'świętokrzyskie',
-        'HOLY CROSS VOIVODESHIP': 'świętokrzyskie',
-
-        'WARMIŃSKO-MAZURSKIE': 'warmińsko-mazurskie',
-        'WARMINSKO-MAZURSKIE': 'warmińsko-mazurskie',
-        'WARMIAN-MASURIAN VOIVODESHIP': 'warmińsko-mazurskie',
-
-        'WIELKOPOLSKIE': 'wielkopolskie',
-        'WIELKOPOLSKA': 'wielkopolskie',  # Heredis variation
-        'GREATER POLAND VOIVODESHIP': 'wielkopolskie',
-        'GREATER POLAND': 'wielkopolskie',
-
-        'ZACHODNIOPOMORSKIE': 'zachodniopomorskie',
-        'WEST POMERANIAN VOIVODESHIP': 'zachodniopomorskie',
-        'WEST POMERANIA': 'zachodniopomorskie',
+        "DOLNOŚLĄSKIE": "dolnośląskie",
+        "DOLNOSLASKIE": "dolnośląskie",
+        "LOWER SILESIAN VOIVODESHIP": "dolnośląskie",
+        "LOWER SILESIA": "dolnośląskie",
+        "KUJAWSKO-POMORSKIE": "kujawsko-pomorskie",
+        "KUYAVIAN-POMERANIAN VOIVODESHIP": "kujawsko-pomorskie",
+        "KUYAVIAN-POMERANIAN": "kujawsko-pomorskie",
+        "LUBELSKIE": "lubelskie",
+        "LUBLIN VOIVODESHIP": "lubelskie",
+        "LUBUSKIE": "lubuskie",
+        "LUBUSZ VOIVODESHIP": "lubuskie",
+        "ŁÓDZKIE": "łódzkie",
+        "ŁODZKIE": "łódzkie",
+        "LODZKIE": "łódzkie",
+        "LODZ VOIVODESHIP": "łódzkie",
+        "MAŁOPOLSKIE": "małopolskie",
+        "MAŁOPOLSKA": "małopolskie",  # Heredis variation
+        "MALOPOLSKIE": "małopolskie",
+        "MALOPOLSKA": "małopolskie",  # Heredis variation
+        "LESSER POLAND VOIVODESHIP": "małopolskie",
+        "LESSER POLAND": "małopolskie",
+        "MAZOWIECKIE": "mazowieckie",
+        "MASOVIAN VOIVODESHIP": "mazowieckie",
+        "MASOVIA": "mazowieckie",
+        "OPOLSKIE": "opolskie",
+        "OPOLE VOIVODESHIP": "opolskie",
+        "PODKARPACKIE": "podkarpackie",
+        "SUBCARPATHIAN VOIVODESHIP": "podkarpackie",
+        "SUBCARPATHIA": "podkarpackie",
+        "PODLASKIE": "podlaskie",
+        "PODLASIE": "podlaskie",
+        "PODLACHIA": "podlaskie",
+        "POMORSKIE": "pomorskie",
+        "POMERANIAN VOIVODESHIP": "pomorskie",
+        "POMERANIA": "pomorskie",
+        "ŚLĄSKIE": "śląskie",
+        "SLASKIE": "śląskie",
+        "SILESIAN VOIVODESHIP": "śląskie",
+        "SILESIA": "śląskie",
+        "ŚWIĘTOKRZYSKIE": "świętokrzyskie",
+        "SWIETOKRZYSKIE": "świętokrzyskie",
+        "HOLY CROSS VOIVODESHIP": "świętokrzyskie",
+        "WARMIŃSKO-MAZURSKIE": "warmińsko-mazurskie",
+        "WARMINSKO-MAZURSKIE": "warmińsko-mazurskie",
+        "WARMIAN-MASURIAN VOIVODESHIP": "warmińsko-mazurskie",
+        "WIELKOPOLSKIE": "wielkopolskie",
+        "WIELKOPOLSKA": "wielkopolskie",  # Heredis variation
+        "GREATER POLAND VOIVODESHIP": "wielkopolskie",
+        "GREATER POLAND": "wielkopolskie",
+        "ZACHODNIOPOMORSKIE": "zachodniopomorskie",
+        "WEST POMERANIAN VOIVODESHIP": "zachodniopomorskie",
+        "WEST POMERANIA": "zachodniopomorskie",
     }
 
     def __init__(self, db_path: Path, use_nominatim: bool = False):
@@ -218,15 +210,17 @@ class HeredisAdapter:
                 person, skip_reason = self._extract_person(cursor, row)
                 if person:
                     persons.append(person)
-                elif skip_reason == 'no_name':
+                elif skip_reason == "no_name":
                     skipped_no_name += 1
-                elif skip_reason == 'uncertain':
+                elif skip_reason == "uncertain":
                     skipped_uncertain += 1
 
             if skipped_no_name > 0:
                 print(f"Skipped {skipped_no_name} person(s) without names")
             if skipped_uncertain > 0:
-                print(f"Skipped {skipped_uncertain} person(s) with uncertain names (containing '?')")
+                print(
+                    f"Skipped {skipped_uncertain} person(s) with uncertain names (containing '?')"
+                )
 
         except Exception as e:
             print(f"Error parsing Heredis database: {e}")
@@ -234,7 +228,9 @@ class HeredisAdapter:
 
         return persons
 
-    def _extract_person(self, cursor: sqlite3.Cursor, row: sqlite3.Row) -> Tuple[Optional[Person], Optional[str]]:
+    def _extract_person(
+        self, cursor: sqlite3.Cursor, row: sqlite3.Row
+    ) -> Tuple[Optional[Person], Optional[str]]:
         """Extract person information from database row
 
         Args:
@@ -248,62 +244,71 @@ class HeredisAdapter:
         try:
             # Get basic information
             person_id = f"@{row['CodeID']}@"  # Format similar to GEDCOM IDs
-            given_name = (row['Prenoms'] or "").strip()
-            surname = (row['Surname'] or "").strip()
+            given_name = (row["Prenoms"] or "").strip()
+            surname = (row["Surname"] or "").strip()
 
             # Skip persons without at least a surname or given name
             if not surname and not given_name:
-                return None, 'no_name'
+                return None, "no_name"
 
             # Skip persons with uncertain names (containing "?")
-            if '?' in given_name or '?' in surname:
-                return None, 'uncertain'
+            if "?" in given_name or "?" in surname:
+                return None, "uncertain"
 
             # Get birth information
             birth_year = None
             birth_place = None
             birth_voivodeship = None
-            if row['XrefMainEventNaissance']:
+            birth_event_id = row["XrefMainEventNaissance"]
+            if birth_event_id:
                 birth_year, birth_place, birth_voivodeship = self._get_event_details(
-                    cursor, row['XrefMainEventNaissance']
+                    cursor, birth_event_id
                 )
 
             # Get death information
             death_year = None
             death_place = None
             death_voivodeship = None
-            if row['XrefMainEventDeces']:
+            death_event_id = row["XrefMainEventDeces"]
+            if death_event_id:
                 death_year, death_place, death_voivodeship = self._get_event_details(
-                    cursor, row['XrefMainEventDeces']
+                    cursor, death_event_id
                 )
 
             # Get parent names
             father_name = None
             mother_name = None
-            if row['XrefPere']:
-                father_name = self._get_person_name(cursor, row['XrefPere'])
-            if row['XrefMere']:
-                mother_name = self._get_person_name(cursor, row['XrefMere'])
+            if row["XrefPere"]:
+                father_name = self._get_person_name(cursor, row["XrefPere"])
+            if row["XrefMere"]:
+                mother_name = self._get_person_name(cursor, row["XrefMere"])
 
-            return Person(
-                id=person_id,
-                given_name=given_name,
-                surname=surname,
-                birth_year=birth_year,
-                death_year=death_year,
-                birth_place=birth_place,
-                death_place=death_place,
-                birth_voivodeship=birth_voivodeship,
-                death_voivodeship=death_voivodeship,
-                father_name=father_name,
-                mother_name=mother_name
-            ), None
+            return (
+                Person(
+                    id=person_id,
+                    given_name=given_name,
+                    surname=surname,
+                    birth_year=birth_year,
+                    death_year=death_year,
+                    birth_place=birth_place,
+                    death_place=death_place,
+                    birth_voivodeship=birth_voivodeship,
+                    death_voivodeship=death_voivodeship,
+                    father_name=father_name,
+                    mother_name=mother_name,
+                    birth_event_id=birth_event_id,
+                    death_event_id=death_event_id,
+                ),
+                None,
+            )
 
         except Exception as e:
             print(f"Error extracting person {row['CodeID']}: {e}")
-            return None, 'error'
+            return None, "error"
 
-    def _get_event_details(self, cursor: sqlite3.Cursor, event_id: int) -> Tuple[Optional[int], Optional[str], Optional[str]]:
+    def _get_event_details(
+        self, cursor: sqlite3.Cursor, event_id: int
+    ) -> Tuple[Optional[int], Optional[str], Optional[str]]:
         """Get event details (year, place, voivodeship)
 
         Args:
@@ -333,29 +338,29 @@ class HeredisAdapter:
             return None, None, None
 
         # Extract year from DateGed
-        year = self._extract_year(row['DateGed'])
+        year = self._extract_year(row["DateGed"])
 
         # Build place string
         place_string = None
         voivodeship = None
-        if row['XrefLieu']:
+        if row["XrefLieu"]:
             place_parts = []
-            if row['Ville']:
-                place_parts.append(row['Ville'])
-            if row['Departement']:
-                place_parts.append(row['Departement'])
-            if row['Region']:
-                place_parts.append(row['Region'])
-            if row['Pays']:
-                place_parts.append(row['Pays'])
+            if row["Ville"]:
+                place_parts.append(row["Ville"])
+            if row["Departement"]:
+                place_parts.append(row["Departement"])
+            if row["Region"]:
+                place_parts.append(row["Region"])
+            if row["Pays"]:
+                place_parts.append(row["Pays"])
 
             if place_parts:
-                place_string = ', '.join(place_parts)
+                place_string = ", ".join(place_parts)
 
             # Extract voivodeship from Region field or parse from place string
             # In Heredis databases, the Region field often contains the voivodeship
-            if row['Region']:
-                voivodeship = self._parse_voivodeship_direct(row['Region'])
+            if row["Region"]:
+                voivodeship = self._parse_voivodeship_direct(row["Region"])
 
             # If not found in Region, try parsing the full place string
             if not voivodeship:
@@ -385,7 +390,7 @@ class HeredisAdapter:
             return self.VOIVODESHIP_MAPPING[region_upper]
 
         # Also try LocationParser's mapping if available (for integration with genecrawler)
-        if hasattr(self.location_parser, 'VOIVODESHIP_MAPPING'):
+        if hasattr(self.location_parser, "VOIVODESHIP_MAPPING"):
             mapping = self.location_parser.VOIVODESHIP_MAPPING
             if region_upper in mapping:
                 return mapping[region_upper]
@@ -408,13 +413,67 @@ class HeredisAdapter:
 
         try:
             # Try to extract 4-digit year
-            match = re.search(r'\b(1\d{3}|20\d{2})\b', date_str)
+            match = re.search(r"\b(1\d{3}|20\d{2})\b", date_str)
             if match:
                 return int(match.group(1))
         except Exception:
             pass
 
         return None
+
+    def person_needs_sourcing(self, person: "Person") -> bool:
+        """Check if a person needs sourcing (is "unmatched")
+
+        A person needs sourcing if:
+        1. They have no birth/death date information at all, OR
+        2. They have birth/death dates but those events don't have sources attached
+
+        Args:
+            person: Person object to check
+
+        Returns:
+            True if the person needs sourcing, False otherwise
+        """
+        # Check if person has any vital date information
+        has_vital_dates = person.birth_year is not None or person.death_year is not None
+
+        if not has_vital_dates:
+            # No date information at all - needs sourcing
+            return True
+
+        # Person has dates, now check if they have sources
+        conn = self._open_connection()
+        cursor = conn.cursor()
+
+        # Check if birth event has sources
+        birth_has_sources = False
+        if person.birth_event_id:
+            cursor.execute(
+                "SELECT COUNT(*) FROM LiensSourceEvenement WHERE XrefEvenement = ?",
+                (person.birth_event_id,),
+            )
+            count = cursor.fetchone()[0]
+            birth_has_sources = count > 0
+
+        # Check if death event has sources
+        death_has_sources = False
+        if person.death_event_id:
+            cursor.execute(
+                "SELECT COUNT(*) FROM LiensSourceEvenement WHERE XrefEvenement = ?",
+                (person.death_event_id,),
+            )
+            count = cursor.fetchone()[0]
+            death_has_sources = count > 0
+
+        # If person has birth year but no birth sources, OR has death year but no death sources
+        # then they need sourcing
+        if person.birth_year and not birth_has_sources:
+            return True
+        if person.death_year and not death_has_sources:
+            return True
+
+        # All vital dates have sources
+        return False
 
     def _get_person_name(self, cursor: sqlite3.Cursor, person_id: int) -> Optional[str]:
         """Get person's full name
@@ -439,8 +498,8 @@ class HeredisAdapter:
         if not row:
             return None
 
-        given_name = (row['Prenoms'] or "").strip()
-        surname = (row['Nom'] or "").strip()
+        given_name = (row["Prenoms"] or "").strip()
+        surname = (row["Nom"] or "").strip()
 
         # Build full name
         parts = []
@@ -449,7 +508,7 @@ class HeredisAdapter:
         if surname:
             parts.append(surname)
 
-        return ' '.join(parts) if parts else None
+        return " ".join(parts) if parts else None
 
     def __del__(self):
         """Cleanup: close connection if still open"""
@@ -500,7 +559,9 @@ def main():
     # Show statistics
     with_birth = [p for p in persons if p.birth_year]
     with_death = [p for p in persons if p.death_year]
-    with_voivodeship = [p for p in persons if p.birth_voivodeship or p.death_voivodeship]
+    with_voivodeship = [
+        p for p in persons if p.birth_voivodeship or p.death_voivodeship
+    ]
     with_polish_connection = [p for p in persons if p.has_polish_connection()]
 
     print(f"\nStatistics:")

@@ -72,6 +72,11 @@ def main():
         default=None,
         help="Maximum number of result pages to crawl per search (default: unlimited)",
     )
+    parser.add_argument(
+        "--unmatched-only",
+        action="store_true",
+        help="Only crawl persons who need sourcing (no GeneCrawler matches AND either no vital dates or vital dates without sources in Heredis)",
+    )
 
     args = parser.parse_args()
 
@@ -159,6 +164,28 @@ def main():
     # Initialize matched records database
     matched_db = MatchedRecordsDB()
     print(f"Matched records database: {matched_db.db_path}")
+
+    # Filter for unmatched persons if requested
+    if args.unmatched_only:
+        persons_before_filter = len(persons)
+        # Reopen adapter to check for sources
+        with HeredisAdapter(
+            args.heredis_db, use_nominatim=args.use_nominatim
+        ) as adapter:
+            persons = [
+                p
+                for p in persons
+                if not matched_db.has_matched_records(p.id)
+                and adapter.person_needs_sourcing(p)
+            ]
+        filtered_count = persons_before_filter - len(persons)
+        if filtered_count > 0:
+            print(
+                f"Filtered out {filtered_count} person(s) with existing matched records or complete sources"
+            )
+        if len(persons) == 0:
+            print("No unmatched persons to process")
+            sys.exit(0)
 
     # Search databases
     with sync_playwright() as p:

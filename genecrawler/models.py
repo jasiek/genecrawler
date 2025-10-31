@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 @dataclass
 class Person:
     """Represents a person from genealogy database"""
+
     id: str
     given_name: str
     surname: str
@@ -22,6 +23,8 @@ class Person:
     death_voivodeship: Optional[str] = None
     father_name: Optional[str] = None
     mother_name: Optional[str] = None
+    birth_event_id: Optional[int] = None
+    death_event_id: Optional[int] = None
 
     def has_polish_connection(self) -> bool:
         """Check if person has a connection to Poland
@@ -47,7 +50,11 @@ class Person:
         for place in places:
             if place:
                 place_upper = place.upper()
-                if 'POLAND' in place_upper or 'POLSKA' in place_upper or 'POL' in place_upper:
+                if (
+                    "POLAND" in place_upper
+                    or "POLSKA" in place_upper
+                    or "POL" in place_upper
+                ):
                     return True
 
         # We have location info but it doesn't mention Poland
@@ -57,6 +64,7 @@ class Person:
 @dataclass
 class SearchResult:
     """Represents a search result from a genealogical database"""
+
     source: str
     found: bool
     record_count: int

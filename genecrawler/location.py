@@ -156,7 +156,13 @@ class LocationParser:
                 chunks = location.address.split(",")
                 for c in chunks:
                     if "województwo" in c:
-                        voivodeship = c.split(" ")[1].strip()
+                        # Extract voivodeship name from format "województwo małopolskie"
+                        # Split and take the last part to handle leading spaces
+                        parts = c.strip().split()
+                        if len(parts) >= 2:
+                            voivodeship = parts[
+                                -1
+                            ]  # Take the last word (the actual voivodeship name)
                         break
 
                 if voivodeship:
